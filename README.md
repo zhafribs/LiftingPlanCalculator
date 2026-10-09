@@ -73,5 +73,80 @@ It **is** committed, because Google's guidance is that it is not a secret and
 because the build cannot run without it. The API key inside it is restricted by
 package name and signing certificate.
 
-That makes this repository's visibility a decision: keep it **private**, or restrict
-the key in the Google Cloud console.
+That makes this repository's visibility a decision rather than a detail. It is kept
+**private**, which is what lets the Firebase config, and the encrypted signing backup
+beside it, live here at all.
+
+---
+
+# Releasing
+
+The whole runbook, because most of it is the kind of thing you do twice a year and
+cannot remember.
+
+## 1. Bump the version
+
+In `app/build.gradle.kts`:
+
+- **`versionCode`** — must rise for every build you distribute. Play compares it and
+  refuses a repeat, and an Android device uses it to decide whether an APK is an
+  *upgrade* — so a stale one means the new file will not install over the old.
+- **`versionName`** — what a person reads.
+- **The APK filename**, in the `androidComponents` block at the foot of the same file.
+
+The scheme is `major*10000 + minor*100 + patch`: v3.3.0 is `30300`, its first patch
+`30301`.
+
+## 2. Build, and verify the signature
+
+```bash
+./gradlew :app:assembleRelease
+
+# apksigner needs a JDK on PATH
+export JAVA_HOME=/opt/android-studio/jbr
+apksigner verify --print-certs \
+  app/build/outputs/apk/release/lifting-plan-calculator-v3.3.apk
+```
+
+**Do not skip the verify.** When `keystore.properties` is missing, the build still
+succeeds — `app/build.gradle.kts` reads it defensively on purpose — and it produces
+an *unsigned* APK that looks entirely normal until you try to install it.
+`apksigner` either prints a certificate or tells you the file is not signed.
+
+## 3. Publish
+
+```bash
+gh release create v3.3 \
+  app/build/outputs/apk/release/lifting-plan-calculator-v3.3.apk \
+  --title "v3.3" --notes "..."
+```
+
+## The signing-certificate trap
+
+**Every key that signs a build needs its SHA-1 registered in Firebase, or Google
+Sign-In fails in that build. It does not crash — it reports that sign-in is "not set
+up for this build", which reads like a broken app rather than a missing setting.**
+
+There are up to **three** keys, and they are all different:
+
+| Key | Signs what | SHA-1 |
+|---|---|---|
+| Debug | `assembleDebug` on this machine | `fb4691e275601c8dcdad704b446102667b05fbc2` |
+| Release | the APK in this repository's Releases | `f2430fbfd05160a9fedc7f5bfba0d59e09a91442` |
+| Play App Signing | anything installed from Play | see Play Console → Setup → App signing |
+
+Read one off a keystore with:
+
+```bash
+export JAVA_HOME=/opt/android-studio/jbr
+keytool -list -v -keystore lifting-plan-release.jks    # prompts for the password
+```
+
+Then: **Firebase Console → Project settings → Your app → Add fingerprint**,
+re-download `google-services.json`, replace `app/google-services.json`, and commit it.
+
+Register all of them. That is the state you want: debug builds, sideloaded releases
+and Play installs then all work, and none of them silently loses the Google button.
+
+Email and password sign-in works regardless, so a build with a missing fingerprint is
+usable — it is just missing its quickest route in.
