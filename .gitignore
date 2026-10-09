@@ -22,13 +22,21 @@ local.properties
 # Secrets
 # ---------------------------------------------------------------------------
 
-# The release keystore and the file holding its passwords.
+# Release signing material.
 #
-# **Committing either would let anyone sign an update that Android accepts as this
-# app** -- Google Play would serve it to your users as a genuine release.  Both live
-# on this machine only and both need backing up somewhere that is not this
-# repository: losing them means you can never update the app again under its
-# existing listing, and leaking them means somebody else can.
+# THIS IS TRACKED.  `lifting-plan-release.jks` and `keystore.properties` are both
+# committed, which was a deliberate decision by the operator after being told what it
+# means: anyone who can read this repository can sign an update that Android accepts
+# as this app, and repository history is permanent -- removing them in a later commit
+# does not take them out of the earlier ones.
+#
+# It is only defensible because this repository is private.  If that ever changes,
+# this is the first thing to deal with.
+#
+# The rules stay, even though they no longer match the two files above (git ignores
+# nothing that is already tracked).  They are here for the *next* key: a new keystore
+# added to this directory should not be committed by accident, because by then nobody
+# will remember that this decision was made once, for these particular files.
 keystore.properties
 *.jks
 *.keystore
