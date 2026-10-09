@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "635679039985-2od6us0f9lgv65igcillo1flj749bkd7.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.zhafrisbs.liftingplancalculator",
+            "certificate_hash": "f2430fbfd05160a9fedc7f5bfba0d59e09a91442"
+          }
+        },
+        {
           "client_id": "635679039985-6jdh1chbmgocou5gvder1bh5bf85s5v5.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
