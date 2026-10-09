@@ -33,6 +33,18 @@ keystore.properties
 *.jks
 *.keystore
 
+# Backup archives of the above, and a net under the obvious mistake.
+#
+# An encrypted archive of the keystore belongs somewhere that is not this machine
+# -- a password manager, or Proton Drive.  It must **not** go in this repository,
+# because repository history is permanent: an archive committed once stays in every
+# commit, and removing it later does not take it out of the ones already made.
+#
+# The archive should be built outside the project directory.  This is the net for
+# when it is not.
+*.7z
+*.zip
+
 # ---------------------------------------------------------------------------
 # Firebase
 # ---------------------------------------------------------------------------
