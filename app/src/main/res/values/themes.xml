@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The app is a dark engineering surface on every phone, and deliberately has
+      no DayNight variant: a lift plan read in a plant room should look the same
+      whichever way the device is configured.  colors.xml carries no night
+      override either, so the two agree by construction.
+    -->
+    <style name="Theme.LiftingPlanCalculator" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

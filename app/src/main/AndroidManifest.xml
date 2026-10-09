@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      **One permission, and it is the price of the sign-in gate.**
+
+      Everything else about this app is still a calculator: it reads no lift from
+      anywhere, sends no lift anywhere, and keeps every plan on the device.
+
+      INTERNET is here because the email allowlist is enforced by the *server*.
+      A check that lived only in the APK would be deleted by anyone willing to
+      unzip it, so Firestore, not the app, refuses a signed-in user who is not on
+      the list, and that refusal is the only thing that makes the list real.
+
+      What leaves the device is a sign-in and one read of a document holding the
+      user's own address.  No crane, no sling, no load and no plan is ever
+      uploaded, and there is no analytics library in the build to do it with.
+
+      The report's offline guarantee is untouched: KaTeX ships inside the APK, so
+      a plan read on site still cannot change because a CDN did.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.LiftingPlanCalculator">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.LiftingPlanCalculator"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="DiscouragedApi">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

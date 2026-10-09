@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Intentionally empty.  The app has a single dark theme, so there is nothing
+      for a night qualifier to change.  See values/themes.xml.
+    -->
+</resources>

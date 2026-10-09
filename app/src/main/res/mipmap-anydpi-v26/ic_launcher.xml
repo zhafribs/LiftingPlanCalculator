@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon, for API 26 and up.
+
+  The foreground is a **bitmap** rather than the vector the template ships with,
+  because the artwork is a supplied image rather than something drawn in paths.  It
+  is laid out on a 108dp canvas with the logo inside the middle ~59%, so the hook
+  survives every mask Android applies, whether circle, squircle or rounded square,
+  without its outer edges being clipped.
+
+  The legacy icons in `mipmap-*dpi` are what API 24 and 25 use; `minSdk` is 24, so
+  they are not optional, and they are generated from the same source.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <!--
+      Themed icons.  Android tints this layer with the wallpaper's palette, using
+      the image's *alpha*, so a supplied colour logo works here as a silhouette
+      rather than as a smudge of colour.
+    -->
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

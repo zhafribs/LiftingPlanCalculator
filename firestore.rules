@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// The allowlist.
+//
+// One document per permitted address, in a collection called `allowed`, with the
+// **lowercased email as the document ID** and no fields that matter. That is the
+// whole data model, and it is deliberately that small: this file is the only thing
+// standing between "anyone who installs the app" and "the people you approved", so
+// it has to be short enough to read in one sitting.
+//
+// **Why the rule lives here and not in the app.** The app is offline and carries no
+// data of its own, so a check compiled into the APK is a check anyone can delete --
+// unzip it, patch the branch, re-sign, done. The only thing that makes an allowlist
+// real is that the *server* is the one refusing. That is what this file is.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A signed-in user, with an address the provider stands behind.
+    //
+    // `email_verified` is **not** a formality. With email/password sign-up, anyone
+    // can register *any* address they like -- including one on your allowlist --
+    // without ever controlling it. Requiring verification is what makes the
+    // allowlisted address the one they can actually receive mail at. A Google
+    // account is verified by Google, so it satisfies this the moment it signs in.
+    function approved() {
+      return request.auth != null
+          && request.auth.token.email != null
+          && request.auth.token.email_verified == true;
+    }
+
+    match /allowed/{emailDoc} {
+      // A user may ask about **exactly one address -- their own** -- and learns
+      // nothing about anyone else on the list. The document ID is stored lowercased,
+      // so the lowercased token email is what it is compared against.
+      allow read: if approved() && request.auth.token.email.lower() == emailDoc;
+
+      // **Nobody writes here from a client.** Every write is refused, including an
+      // admin's. If a client could write, an unlisted user could add their own
+      // address and the list would mean nothing; you add people in the Firebase
+      // Console, or with the Admin SDK from a machine that holds a service account.
+      allow write: if false;
+    }
+
+    // Everything else in this database is unreachable from the app. Firestore denies
+    // by default anyway, so this is documentation rather than a lock -- access is
+    // granted if *any* rule allows it, so a `false` here cannot take away what
+    // `allowed` grants above it. It is here so the next person reading this file can
+    // see that `allowed` is the *only* thing meant to be reachable.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

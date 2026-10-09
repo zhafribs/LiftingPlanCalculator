@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Only the colours the platform theme needs are declared here.  Everything
+      the Compose UI draws lives in ui/theme/Color.kt, so there is one place per
+      colour rather than one place per surface.
+    -->
+    <color name="window_background">#FF1B212C</color>
+
+    <!--
+      The launcher icon's backing plate, behind the foreground artwork.  The same
+      value as the window background on purpose: the icon's plate and the app's
+      first screen then read as one surface rather than two.
+    -->
+    <color name="ic_launcher_background">#FF1B212C</color>
+</resources>

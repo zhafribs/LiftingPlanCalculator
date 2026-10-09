@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Declares the one Firebase resource this app uses: the Firestore security rules",
+    "that make the email allowlist real.",
+    "",
+    "It is checked in because the rules are source, not settings -- they are the",
+    "thing an attacker would have to defeat, and a rule set that lives only in a",
+    "console textarea has no history and no review.",
+    "",
+    "Deploying needs the Firebase CLI, which needs npm. Neither is installed on this",
+    "machine (node is present; npm and npx are not), so the rules are pasted into the",
+    "Firebase Console for now -- see the setup notes. With npm, this would be:",
+    "    npx -y firebase-tools@latest deploy --only firestore:rules"
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

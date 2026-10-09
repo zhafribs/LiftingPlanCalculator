@@ -1,0 +1,53 @@
+*.iml
+.gradle
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# The Android SDK location, which is per-machine.  Android Studio regenerates it.
+local.properties
+
+# The IDE's own state.  None of it is needed to build -- and `workspace.xml` in
+# particular records which files were open, so committing it makes every clone
+# disagree about it.
+.idea/
+
+# Kotlin 2.x writes a session directory here.  It is scratch, and it contains
+# absolute paths.
+.kotlin/
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+# The release keystore and the file holding its passwords.
+#
+# **Committing either would let anyone sign an update that Android accepts as this
+# app** -- Google Play would serve it to your users as a genuine release.  Both live
+# on this machine only and both need backing up somewhere that is not this
+# repository: losing them means you can never update the app again under its
+# existing listing, and leaking them means somebody else can.
+keystore.properties
+*.jks
+*.keystore
+
+# ---------------------------------------------------------------------------
+# Firebase
+# ---------------------------------------------------------------------------
+
+# `app/google-services.json` **is** committed, deliberately.
+#
+# Google's own guidance is that it is not a secret: the API key in it is restricted
+# by package name and signing certificate, and the Google services Gradle plugin
+# refuses to build without it.  A clone without it cannot be built, which is exactly
+# what this repository exists to avoid.
+#
+# That does make this repository's visibility a decision rather than a detail.  Keep
+# it private, or restrict the key in the Google Cloud console.
+#
+# The copy at the **root** is not committed: it is a stale duplicate.  The plugin
+# only ever reads the module's, and having two is how a working config once got
+# edited in the wrong one and appeared to do nothing.
+/google-services.json

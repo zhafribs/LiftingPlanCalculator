@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "635679039985",
+    "project_id": "lifting-plan-calculator",
+    "storage_bucket": "lifting-plan-calculator.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:635679039985:android:97bd430bf920938c91e450",
+        "android_client_info": {
+          "package_name": "com.zhafrisbs.liftingplancalculator"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "635679039985-6jdh1chbmgocou5gvder1bh5bf85s5v5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.zhafrisbs.liftingplancalculator",
+            "certificate_hash": "fb4691e275601c8dcdad704b446102667b05fbc2"
+          }
+        },
+        {
+          "client_id": "635679039985-jlh337u8ep5ob09u0jp71942jrjbnncq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvGMvk1W7z89Y0YjKpvAkz7o0HrhLR42U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "635679039985-jlh337u8ep5ob09u0jp71942jrjbnncq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
