@@ -297,6 +297,21 @@ class LiftViewModel : ViewModel() {
     var graphDeviated by mutableStateOf(false)
         private set
 
+    /**
+     * Whether a workbook is in charge of the diagram: the reference's own `workbookMode`.
+     *
+     * The Graph tab's configuration control reads it to decide where a chosen
+     * configuration belongs — to the shared crane state, or to this screen's own copy of
+     * it.  That is exactly where the reference reads its own `workbookMode`, in the
+     * radio's `onChange` (graph.js:936), so the question is asked in the view and only
+     * answered here.
+     *
+     * A plain `get()` rather than Compose state: a click handler always sees the current
+     * value, and nothing draws this.  Observing it would only re-run a composable for a
+     * flag it never renders.
+     */
+    val graphFollowsWorkbook: Boolean get() = workbookMode
+
     // --- the workbook link's bookkeeping ------------------------------------
     //
     // The reference's `workbookMode` / `workbookKey` / `workbookChassis` / `deviated`,
@@ -499,6 +514,19 @@ class LiftViewModel : ViewModel() {
      * diagram is not deviated.  The angle is published afterwards for the reason the sync
      * publishes it -- the two tabs are one state, and the operator has just asked for the
      * diagram to be the Crane tab's.
+     *
+     * **Clearing [workbookChassis] as well as the reading is deliberate, and it is the one
+     * place this port adds to the reference.**  The reference clears only its input key, so
+     * where the operator dragged nothing but the *angle* its reset reports no chassis
+     * change and its view does not re-fit; clearing the chassis here makes the returned fit
+     * signal always `true` on a reset.  That is the right reading of a deliberate "put the
+     * diagram back where the Crane tab has it": a reset is not the incidental re-pull the
+     * reference's narrower rule was written for, and a reader who has just asked for the
+     * diagram to move wants to see the whole arrangement, framed.  On this screen the
+     * question is moot either way -- the camera is fitted from `graphState`, so a reset
+     * that moves the diagram re-fits it and one that does not has nothing to re-fit around
+     * -- and the alternative, leaving a chassis the diagram is no longer drawn to, is a key
+     * that lies about what was last applied.
      */
     fun resetGraphToCrane() {
         workbookChassis = null

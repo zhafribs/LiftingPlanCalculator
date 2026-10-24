@@ -275,11 +275,13 @@ fun LiftingPlanApp(
                         viewModel,
                         onShowReport = { reportSections = "crane" },
                     )
-                    // The one tab that takes no [viewModel]: the working-range diagram
-                    // is not part of the lift, contributes no section to the report,
-                    // and holds its own state.  Handing it the lift's ViewModel would
-                    // say it was allowed to read figures it must not touch.
-                    AppTab.GRAPH -> CraneGraphScreen()
+                    // The diagram is drawn *from* the crane — its position, boom length,
+                    // configuration and angle — so it takes the lift's ViewModel for the
+                    // same reason the Crane tab next door does: the desktop keeps one
+                    // `state.crane` that both read and write, and that one state is what
+                    // makes the Graph tab follow the workbook.  It still contributes no
+                    // section to the report: a working range is not part of the lift.
+                    AppTab.GRAPH -> CraneGraphScreen(viewModel)
                     AppTab.UNIFORM -> UniformLoadScreen(
                         viewModel,
                         onShowReport = {
