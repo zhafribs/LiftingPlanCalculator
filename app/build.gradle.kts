@@ -44,8 +44,8 @@ android {
         // major*10000 + minor*100 + patch, so v3.3.0 is 30300 and its first patch
         // is 30301 -- no one has to remember what the last release used, and a
         // larger number is never handed to an older build.
-        versionCode = 30301
-        versionName = "3.3.1"
+        versionCode = 30400
+        versionName = "3.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
