@@ -5,18 +5,26 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,13 +33,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.zhafrisbs.liftingplancalculator.core.CONFIG_LABELS
+import com.zhafrisbs.liftingplancalculator.core.CONFIGS
 import com.zhafrisbs.liftingplancalculator.core.ChartColumn
 import com.zhafrisbs.liftingplancalculator.core.ChartRow
-import com.zhafrisbs.liftingplancalculator.core.Crane
-import com.zhafrisbs.liftingplancalculator.core.CraneInputs
 import com.zhafrisbs.liftingplancalculator.core.ExcelImport
 import com.zhafrisbs.liftingplancalculator.core.Figures
 import com.zhafrisbs.liftingplancalculator.core.LiftTotals
@@ -45,13 +65,19 @@ import com.zhafrisbs.liftingplancalculator.ui.components.ResultCard
 import com.zhafrisbs.liftingplancalculator.ui.components.ResultRowData
 import com.zhafrisbs.liftingplancalculator.ui.components.ResultTone
 import com.zhafrisbs.liftingplancalculator.ui.components.SectionCard
+import com.zhafrisbs.liftingplancalculator.ui.theme.BorderStrong
 import com.zhafrisbs.liftingplancalculator.ui.theme.Danger
+import com.zhafrisbs.liftingplancalculator.ui.theme.PanelSurface
 import com.zhafrisbs.liftingplancalculator.ui.theme.StateCaution
 import com.zhafrisbs.liftingplancalculator.ui.theme.StateOver
 import com.zhafrisbs.liftingplancalculator.ui.theme.StateWithin
 import com.zhafrisbs.liftingplancalculator.ui.theme.TextMuted
 import com.zhafrisbs.liftingplancalculator.ui.theme.TextPrimary
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 
 /**
  * The Crane tab: the crane, its load chart, and the capacity check.
@@ -88,10 +114,6 @@ fun CraneScreen(
     val totals = LiftTotals.of(viewModel.loadItems, viewModel.tackleItems)
     val context = LocalContext.current
     var importError by remember { mutableStateOf<String?>(null) }
-    // The imported workbook's own display name, kept here rather than read back off
-    // the chart: the picker's name is not part of the parsed table, and the table's
-    // heading has to name the file the operator actually chose.
-    var chartName by remember { mutableStateOf("") }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -104,7 +126,6 @@ fun CraneScreen(
                     .onSuccess { chart ->
                         importError = null
                         val name = displayName(context, uri) ?: "workbook.xlsx"
-                        chartName = name
                         viewModel.importCraneChart(
                             chart = chart,
                             name = name,
@@ -118,15 +139,20 @@ fun CraneScreen(
         }
     }
 
-    // Solving on every recomposition is the reference's model too -- every
-    // keystroke re-solves -- and it is cheap: this is arithmetic, not I/O.  A
-    // failure is captured rather than thrown, because a half-typed number is a
-    // normal state of a form, not a fault.
-    var solveError by remember(inputs, totals.gross) { mutableStateOf<String?>(null) }
-    val result = runCatching { Crane.solve(inputs, totals.gross) }
-        .onFailure { solveError = it.message ?: "The crane calculation could not be completed." }
-        .onSuccess { solveError = null }
-        .getOrNull()
+    // **The answer is the ViewModel's, solved there rather than here.**
+    //
+    // It used to be solved in this composable on every recomposition, and that *was*
+    // the reference's model -- every keystroke re-solves, and it is cheap arithmetic
+    // rather than I/O.  It moved because the two tabs are one lift: the Graph tab's
+    // angle feeds straight back into this check, so a solve here and a solve there
+    // would be two answers to one question, agreeing only until one of them was
+    // refreshed.  The ViewModel re-solves on every write to the crane, the load or the
+    // tackle, so nothing on this screen can read an answer older than its inputs.
+    //
+    // An unsolvable input now shows as a blank card rather than as a line of text: the
+    // engine's own message lives in the ViewModel's solve, and a message invented here
+    // would be a second opinion about a failure the first one already described.
+    val result = viewModel.craneResult
 
     Column(
         modifier = modifier
@@ -187,9 +213,14 @@ fun CraneScreen(
             note = "Typing here switches the chart back to this line.",
         ) {
             val row = inputs.rows.firstOrNull() ?: ChartRow()
+            // With a jib, the boom column is the **assembly** the capacity below is read
+            // off -- the workbook's boom plus the jib the configuration selected -- and it
+            // is shown rather than typed, because it is not a figure anybody enters.  See
+            // `boomAssembly` for what it reads and why.
             ChartEntry(
                 row = row,
                 onRowChange = { viewModel.editCraneChartRow(it) },
+                assembly = boomAssembly(row, inputs.jibActive, inputs.jibLength),
             )
         }
 
@@ -206,7 +237,19 @@ fun CraneScreen(
         // **Changing either one writes through to the entry.**  The entry is this
         // selection written down, so a pick that did not reach it would leave the two
         // load-chart views disagreeing about the same lift.
+        // **And it goes away entirely while a jib is fitted.**
+        //
+        // Not only the radius picker: the whole card.  With a jib the radius is not the
+        // operator's to choose -- it follows from the boom angle the jib chart is read
+        // at -- so the picker has nothing left to drive.  The boom selector could have
+        // stayed, and the desktop does keep it, but on this screen choosing a boom
+        // resets the configuration to the main boom: `ExcelImport.applied` opens on the
+        // main boom alone, because the jib tables have to be looked up again at the new
+        // boom.  A dropdown that silently discards the jib the card below has just
+        // selected is a control whose effect lands nowhere near where it is touched, so
+        // it goes with the radius while a jib is in charge.
         if (inputs.chartSource == "excel" &&
+            !inputs.jibActive &&
             (inputs.chartBooms.size > 1 || inputs.chartRadii.isNotEmpty())
         ) {
             SectionCard(title = "Working Radius & Boom Length") {
@@ -227,7 +270,7 @@ fun CraneScreen(
                     DropdownField(
                         label = "Working Radius",
                         options = inputs.chartRadii,
-                        selected = nearestRadius(inputs.chartRadii, inputs.workingRadius),
+                        selected = nearest(inputs.chartRadii, inputs.workingRadius),
                         optionLabel = { metres(it) },
                         onSelected = { viewModel.selectCraneRadius(it) },
                     )
@@ -253,12 +296,12 @@ fun CraneScreen(
                 SectionCard(
                     title = "Load Chart (Workbook Table)",
                     note = if (chart.matrix) {
-                        "${chartName.ifEmpty { "The workbook" }} read at boom " +
+                        "${inputs.chartName.ifEmpty { "The workbook" }} read at boom " +
                             "${Figures.fmt(inputs.chartBoom, 2, "m")} \u2014 the same boom " +
                             "the dropdown above is set to. Change the boom to see " +
                             "another column's capacities."
                     } else {
-                        "${chartName.ifEmpty { "The workbook" }} as imported: " +
+                        "${inputs.chartName.ifEmpty { "The workbook" }} as imported: " +
                             "${rows.size} charted point${
                                 if (rows.size == 1) "" else "s"
                             }."
@@ -269,9 +312,112 @@ fun CraneScreen(
             }
         }
 
+        // **Where the crane stands on the workbook's own axis.**
+        //
+        // A new-format workbook prints the crane's position, and every figure the Graph
+        // tab draws is measured from it: the axis line, the reach, and the angle the
+        // diagram settles at.  The phone showed this nowhere, so the one figure every
+        // other figure on the graph hangs off was the one figure the operator could not
+        // check.  It is shown for the workbook that carries it and for no other -- a
+        // hand-typed chart has no axis to be located on.
+        //
+        // The words are the desktop's, verbatim, and so is the format: the raw figures
+        // as the workbook prints them, not the `-1.70` the rest of this screen pads to.
+        inputs.chartPosition?.let { position ->
+            Text(
+                text = "Crane location on axis (X, Y): " +
+                    "(${plainNumber(position.first)}, ${plainNumber(position.second)})" +
+                    " \u2014 from the workbook",
+                color = TextMuted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        // **The workbook's jib sheet, and the configuration that reads it.**
+        //
+        // Shown only for a workbook that carries jib tables: a chart with no jib sheet
+        // has no jib to configure, and three radios over nothing would be three controls
+        // that cannot do anything.
+        //
+        // The configuration *is* which table the capacity is read off.  The plain jib is
+        // the workbook's shortest table and the extended jib its longest, so what is left
+        // to choose is the table's own two figures: the boom angle the check is read at,
+        // and which of the offsets that jib allows it is fitted at.  Both are listed from
+        // the workbook's own rows rather than typed -- the way the working radius is
+        // listed from the main chart's -- and both go through the ViewModel, which is
+        // where the Graph tab's own configuration radios meet them.
+        if (inputs.chartJibs.isNotEmpty()) {
+            SectionCard(
+                title = "Jib configuration",
+                note = "From the workbook's jib sheet",
+            ) {
+                CONFIGS.forEach { config ->
+                    JibConfigChoice(
+                        label = CONFIG_LABELS[config] ?: config,
+                        selected = inputs.jibConfig == config,
+                    ) {
+                        viewModel.chooseJib(config = config)
+                    }
+                }
+
+                // The two lists below belong to a jib, not to the main boom: with the
+                // main boom selected there is no jib chart to read an angle from and no
+                // jib fitted to have an offset, so neither list would have anything in
+                // it.  A dropdown over an empty list is a control that cannot do
+                // anything, so it is not drawn.
+                if (inputs.jibActive) {
+                    Text(
+                        text = "Jib ${Figures.fmt(inputs.jibLength ?: 0.0, 2, "m")}" +
+                            " \u2014 set by the configuration",
+                        color = TextMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    // The angle, listed from the selected jib chart's own rows: it is the
+                    // jib chart's *input*, the way the working radius is the main boom's.
+                    // The one shown selected is the angle the check is already being read
+                    // at, which the Graph tab may have moved off a charted row -- so the
+                    // nearest charted angle is the one that matches it.  With nothing
+                    // published yet, the first row is the one an empty select would show.
+                    val angles = inputs.chartJibPoints
+                        .map { it.first }
+                        .sorted()
+                    if (angles.isNotEmpty()) {
+                        DropdownField(
+                            label = "Boom angle",
+                            options = angles,
+                            selected = (inputs.boomAngleDeg ?: result?.boomAngleDeg)
+                                ?.let { nearest(angles, it) }
+                                ?: angles.first(),
+                            optionLabel = { angleLabel(it) },
+                            onSelected = { viewModel.setBoomAngle(it) },
+                        )
+                    }
+
+                    // The offsets, filtered to the length the configuration picked: the
+                    // workbook charts every offset it offers, and only some of them
+                    // belong to the jib now fitted to this boom.
+                    val offsets = inputs.chartJibs
+                        .filter { abs(it.length - (inputs.jibLength ?: 0.0)) < JIB_SAME }
+                        .map { it.offset }
+                        .sorted()
+                    if (offsets.isNotEmpty()) {
+                        DropdownField(
+                            label = "Jib offset angle",
+                            options = offsets,
+                            selected = inputs.jibOffset?.let { nearest(offsets, it) }
+                                ?: offsets.first(),
+                            optionLabel = { Figures.fmt(it, 0, "\u00b0") },
+                            onSelected = { viewModel.chooseJib(offset = it) },
+                        )
+                    }
+                }
+            }
+        }
+
         ResultCard(
             title = "Capacity Check",
-            rows = listOf(
+            rows = listOfNotNull(
                 ResultRowData(
                     "Crane",
                     result?.craneName?.ifEmpty { null } ?: Figures.NOTHING,
@@ -296,6 +442,24 @@ fun CraneScreen(
                     "Boom angle",
                     Figures.fmt(result?.boomAngleDeg, 2, "\u00b0"),
                 ),
+                // **The jib, as the two figures that pick it.**
+                //
+                // A fitted jib is visible nowhere else on this card: the capacity below
+                // it comes from a different table, read against an angle rather than a
+                // radius, and whoever checks that figure has to know which jib it was
+                // checked with.  Shown only while one is fitted -- a "Jib" row on a
+                // main-boom check would name a jib that is not there.  The offset is the
+                // desktop's own whole-degree form, so 25 degrees reads `25` and not
+                // `25.0`.
+                if (inputs.jibActive) {
+                    ResultRowData(
+                        "Jib",
+                        "${Figures.fmt(inputs.jibLength ?: 0.0, 2, "m")} at " +
+                            "${Figures.fmt(inputs.jibOffset ?: 0.0, 0, "\u00b0")} offset",
+                    )
+                } else {
+                    null
+                },
                 // The radius the lookup actually happened at.
                 //
                 // It was **used** all along -- every capacity in this card is read
@@ -312,8 +476,16 @@ fun CraneScreen(
                     "Working radius",
                     Figures.fmt(result?.radiusM?.takeIf { it > 0 }, 2, "m"),
                 ),
+                // **The capacity's own name follows the table it came from.**  With a jib
+                // the figure is the jib chart's, looked up against a boom angle; calling
+                // that "capacity at radius" would name the main boom's lookup for a
+                // number the main boom never supplied.
                 ResultRowData(
-                    "Chart capacity at radius",
+                    if (inputs.jibActive) {
+                        "Jib capacity at boom angle"
+                    } else {
+                        "Chart capacity at radius"
+                    },
                     Figures.fmt(result?.chartCapacityKg, 2, "kg"),
                 ),
                 // The figure the capacity above is measured *against*.
@@ -342,13 +514,7 @@ fun CraneScreen(
             ),
         )
 
-        if (solveError != null) {
-            Text(
-                text = solveError!!,
-                color = StateOver,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        } else if (result != null) {
+        if (result != null) {
             Text(
                 text = result.capacityStatus,
                 color = when (result.capacityBand) {
@@ -360,6 +526,38 @@ fun CraneScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
             )
+        }
+
+        // **The capacity-against-radius picture.**
+        //
+        // The desktop draws it under the same card's rows, so it is drawn here as the
+        // same panel those rows sit on.  The `ResultCard` above cannot hold it: a card of
+        // label-and-value rows is all that widget is, and one that grew a picture slot
+        // would be a widget with a hole in it.
+        //
+        // **Suppressed entirely while a jib is active**, and that is not a layout
+        // preference.  The plotted curve is the *main boom* chart's -- capacity against
+        // radius -- where a jib's capacity comes from the jib table read against a boom
+        // angle.  The main boom's marker would then sit at a radius the jib check never
+        // used, ringed and labelled with a capacity that came from somewhere else, which
+        // is a picture that agrees with nothing on the card beside it.
+        if (result != null && !inputs.jibActive) {
+            val points = capacityPlot(inputs.chartPoints, inputs.chartPairs())
+            if (points.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = PanelSurface,
+                    border = BorderStroke(1.dp, BorderStrong),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    CapacityPlot(
+                        points = points,
+                        radiusM = result.radiusM,
+                        capacityKg = result.chartCapacityKg,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
         }
 
         SectionCard(title = "Actions") {
@@ -396,9 +594,18 @@ fun CraneScreen(
     }
 }
 
-/** The manual entry's four columns, in the desktop's order. */
+/**
+ * The manual entry's four columns, in the desktop's order.
+ *
+ * [assembly] is the boom column's content while a jib is fitted -- the workbook's boom
+ * plus the jib, `31+7.2` -- and null when the column is an ordinary length the operator
+ * enters.  It arrives as a string rather than as the two figures because the assembly is
+ * text (`31+7.2` is not a number), and it is passed in rather than worked out here
+ * because the assembly is a fact about the *configuration*: a [ChartEntry] that read the
+ * jib for itself would be a second place the jib is read from.
+ */
 @Composable
-private fun ChartEntry(row: ChartRow, onRowChange: (ChartRow) -> Unit) {
+private fun ChartEntry(row: ChartRow, onRowChange: (ChartRow) -> Unit, assembly: String?) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -439,14 +646,18 @@ private fun ChartEntry(row: ChartRow, onRowChange: (ChartRow) -> Unit) {
             )
         }
         Box(Modifier.weight(1f)) {
-            NumberField(
-                label = ChartColumn.BOOM.caption,
-                value = row.boom,
-                onValueChange = { onRowChange(row.copy(boom = it)) },
-                unit = ChartColumn.BOOM.unit,
-                decimals = ChartColumn.BOOM.decimals,
-                max = ChartColumn.BOOM.max,
-            )
+            if (assembly != null) {
+                AssemblyField(label = ChartColumn.BOOM.caption, value = assembly)
+            } else {
+                NumberField(
+                    label = ChartColumn.BOOM.caption,
+                    value = row.boom,
+                    onValueChange = { onRowChange(row.copy(boom = it)) },
+                    unit = ChartColumn.BOOM.unit,
+                    decimals = ChartColumn.BOOM.decimals,
+                    max = ChartColumn.BOOM.max,
+                )
+            }
         }
     }
 }
@@ -529,10 +740,17 @@ private fun ChartTable(headers: List<String>, rows: List<List<String>>) {
     }
 }
 
-/** The offered radius closest to the current one, so the dropdown starts on it. */
-private fun nearestRadius(radii: List<Double>, current: Double): Double {
-    if (radii.isEmpty()) return current
-    return radii.minByOrNull { kotlin.math.abs(it - current) } ?: radii.first()
+/**
+ * The offered figure closest to the current one, so a dropdown starts on it.
+ *
+ * The desktop's own `nearest`, and it serves all three dropdowns this screen draws: the
+ * main chart's radii, and the jib chart's angles and offsets.  The radius picker passes
+ * the operator's working radius before an import has offered anything, so an empty list
+ * returns the wanted figure unchanged rather than throwing.
+ */
+private fun nearest(offered: List<Double>, wanted: Double): Double {
+    if (offered.isEmpty()) return wanted
+    return offered.minByOrNull { abs(it - wanted) } ?: offered.first()
 }
 
 private fun metres(value: Double): String = String.format(Locale.US, "%.2f m", value)
@@ -567,3 +785,382 @@ private fun displayName(context: Context, uri: Uri): String? = runCatching {
 private fun readBytes(context: Context, uri: Uri): ByteArray? = runCatching {
     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }.getOrNull()
+
+// ---------------------------------------------------------------------------
+// The assembly, the jib configuration and the capacity plot
+// ---------------------------------------------------------------------------
+
+/**
+ * Two figures this close are the same figure.
+ *
+ * The loader's own `1e-9`, and here it asks which of the workbook's jib tables belongs
+ * to the length the configuration selected: a length read out of a cell is not reliably
+ * the same double as the one written in the sheet beside it.
+ */
+private const val JIB_SAME = 1e-9
+
+/**
+ * The boom column once a jib is fitted: the assembly, shown rather than typed.
+ *
+ * With a jib the boom length is not the operator's to enter.  It is the workbook's own
+ * boom plus the jib the configuration selected, and the desktop prints the two joined by
+ * a `+` -- `31+7.2` -- because that is the crane the capacity in the check below was read
+ * off.  A number typed into this column would describe a *different* crane, in the one
+ * field whoever checks the plan would trust.
+ *
+ * `readOnly` rather than a plain box: the assembly is text, so it cannot be a
+ * `NumberField`, and it has to look like the field it stands in for -- same box, same
+ * label, same place in the row.
+ */
+@Composable
+private fun AssemblyField(label: String, value: String, modifier: Modifier = Modifier) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        readOnly = true,
+        singleLine = true,
+        label = { Text(label) },
+        // The entry's own colours, repeated because the widgets' shared ones are private
+        // to their file.  Focused and unfocused are deliberately the same: this box is
+        // not a control, so a focus ring on it would offer something that is not there.
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = BorderStrong,
+            unfocusedBorderColor = BorderStrong,
+            focusedLabelColor = TextMuted,
+            unfocusedLabelColor = TextMuted,
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+        ),
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+/**
+ * One radio of the jib configuration, with the desktop's own caption beside it.
+ *
+ * A `Row` of its own because the radio and its label have to sit on one line and there
+ * are three of them: three hand-written rows would be three places for the spacing to
+ * drift apart, which is the fault the shared widgets exist to prevent.
+ */
+@Composable
+private fun JibConfigChoice(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Text(
+            text = label,
+            color = TextPrimary,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+// -- the plot's own colours and its scale ------------------------------------
+//
+// Verbatim from the SVG the desktop builds in `crane.js`'s `plot`, and kept here rather
+// than in `theme/Color.kt` because none of them is used anywhere else: they are the
+// chart's colours, not the app's palette.
+
+/** The grid lines, and the axis labels beside them. */
+private val PlotGrid = Color(0xFF243040)
+private val PlotLabel = Color(0xFF64748D)
+
+/** The charted points and the line joining them. */
+private val PlotLine = Color(0xFF5CB3FF)
+
+/** The working radius: the dashed line down to the axis and the ring on the point. */
+private val PlotMarker = Color(0xFFE2A558)
+
+/**
+ * The desktop's viewBox, and its four margins.
+ *
+ * The plot is drawn in the SVG's own 480 x 220 units and scaled to whatever width the
+ * card gives it, which is what the desktop's `width="100%"` does: one uniform scaling,
+ * so the chart keeps its proportions on any phone rather than being stretched sideways.
+ */
+private const val PLOT_WIDTH = 480f
+private const val PLOT_HEIGHT = 220f
+private const val PLOT_MARGIN_LEFT = 46f
+private const val PLOT_MARGIN_RIGHT = 16f
+private const val PLOT_MARGIN_TOP = 14f
+private const val PLOT_MARGIN_BOTTOM = 30f
+
+/**
+ * The type, held at a size a phone can read.
+ *
+ * The desktop sets these in viewBox units -- 10 of them, which would scale down to
+ * roughly 6.5 sp on a phone's card and be a tick nobody could read.  The desktop's own
+ * figures are kept as `sp` instead of shrinking with the geometry; only the geometry
+ * scales.  The marker's label is half a point larger there, and is here too.
+ */
+private val PlotLabelSize = 10.sp
+private val PlotMarkerLabelSize = 10.5.sp
+
+/**
+ * The capacity-against-radius picture, ported from `plot` in the desktop's `crane.js`.
+ *
+ * **Presentation only.**  Every figure on it -- the charted points, the marker's radius
+ * and the capacity read there -- was solved before this was called; nothing here re-solves
+ * or re-reads a chart.  The desktop says the same of its own version, and it is what keeps
+ * the picture and the rows above it from being two answers to one question.
+ *
+ * [radiusM] and [capacityKg] are the *solved* working radius and the capacity found at
+ * it, so the marker sits on the curve's own point for the lift rather than on whatever
+ * the entry says.  It is left out when there is no capacity to ring, because a ring at
+ * zero is a claim the chart never made.
+ */
+@Composable
+private fun CapacityPlot(
+    points: List<Pair<Double, Double>>,
+    radiusM: Double,
+    capacityKg: Double?,
+    modifier: Modifier = Modifier,
+) {
+    val measurer = rememberTextMeasurer()
+    val markerCapacity = capacityKg?.takeIf { it != 0.0 }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(PLOT_WIDTH / PLOT_HEIGHT),
+    ) {
+        val scale = size.width / PLOT_WIDTH
+        val left = PLOT_MARGIN_LEFT * scale
+        val right = PLOT_MARGIN_RIGHT * scale
+        val top = PLOT_MARGIN_TOP * scale
+        val bottom = PLOT_MARGIN_BOTTOM * scale
+        val plotRight = size.width - right
+        val plotBottom = size.height - bottom
+
+        // The scales run to the next round maximum *including* the marker, so the working
+        // radius can never sit on or past the right edge of its own chart.
+        val marker = if (radiusM > 0 && markerCapacity != null) {
+            radiusM to markerCapacity
+        } else {
+            null
+        }
+        // `maxOfOrNull` rather than `maxOf`: an empty [points] list would throw, and a
+        // chart with nothing on it is worth drawing as an empty grid rather than crashing
+        // a tab.  `niceMax` turns the resulting zero into a scale of one.
+        val xMax = niceMax(maxOf(points.maxOfOrNull { it.first } ?: 0.0, marker?.first ?: 0.0))
+        val yMax = niceMax(maxOf(points.maxOfOrNull { it.second } ?: 0.0, marker?.second ?: 0.0))
+
+        fun x(radius: Double): Float = left + (radius / xMax).toFloat() * (plotRight - left)
+        fun y(capacity: Double): Float =
+            plotBottom - (capacity / yMax).toFloat() * (plotBottom - top)
+
+        // The grid: four divisions each way, labelled with the figure at the line.  The
+        // capacity labels are in **tonnes**, which is the unit the chart is printed in and
+        // the unit the axis title names -- a grid labelled in kilograms would be five
+        // digits at every line.
+        for (i in 1..4) {
+            val gx = left + (i / 4f) * (plotRight - left)
+            val gy = plotBottom - (i / 4f) * (plotBottom - top)
+            drawLine(PlotGrid, Offset(gx, top), Offset(gx, plotBottom), strokeWidth = scale)
+            drawLine(PlotGrid, Offset(left, gy), Offset(plotRight, gy), strokeWidth = scale)
+            drawPlotLabel(
+                measurer = measurer,
+                text = whole(i / 4.0 * xMax),
+                x = gx,
+                baselineY = plotBottom + 14f * scale,
+                anchor = 0.5f,
+                colour = PlotLabel,
+                size = PlotLabelSize,
+            )
+            drawPlotLabel(
+                measurer = measurer,
+                text = whole(i / 4.0 * yMax / 1000.0),
+                x = left - 8f * scale,
+                baselineY = gy + 3f * scale,
+                anchor = 1f,
+                colour = PlotLabel,
+                size = PlotLabelSize,
+            )
+        }
+
+        // The charted points, joined in radius order: the capacity curve.
+        val curve = Path()
+        points.forEachIndexed { index, point ->
+            val px = x(point.first)
+            val py = y(point.second)
+            if (index == 0) curve.moveTo(px, py) else curve.lineTo(px, py)
+        }
+        drawPath(curve, PlotLine, style = Stroke(width = 2f * scale))
+        points.forEach { point ->
+            drawCircle(
+                PlotLine,
+                radius = 2.6f * scale,
+                center = Offset(x(point.first), y(point.second)),
+            )
+        }
+
+        marker?.let { working ->
+            val mx = x(working.first)
+            val my = y(working.second)
+            drawLine(
+                PlotMarker,
+                Offset(mx, top),
+                Offset(mx, plotBottom),
+                strokeWidth = scale,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f * scale, 3f * scale)),
+            )
+            drawCircle(
+                PlotMarker,
+                radius = 5f * scale,
+                center = Offset(mx, my),
+                style = Stroke(width = 2f * scale),
+            )
+            drawPlotLabel(
+                measurer = measurer,
+                text = "${Figures.fmt(working.second, 0, "kg")} at " +
+                    Figures.fmt(working.first, 2, "m"),
+                x = mx + 8f * scale,
+                baselineY = my - 8f * scale,
+                anchor = 0f,
+                colour = PlotMarker,
+                size = PlotMarkerLabelSize,
+            )
+        }
+
+        drawPlotLabel(
+            measurer = measurer,
+            text = "radius (m)",
+            x = plotRight,
+            baselineY = size.height - 6f * scale,
+            anchor = 1f,
+            colour = PlotLabel,
+            size = PlotLabelSize,
+        )
+        drawPlotLabel(
+            measurer = measurer,
+            text = "rated load (t)",
+            x = 6f * scale,
+            baselineY = top,
+            anchor = 0f,
+            colour = PlotLabel,
+            size = PlotLabelSize,
+        )
+    }
+}
+
+/**
+ * A label positioned by its baseline and its `text-anchor`, exactly as the SVG does.
+ *
+ * [anchor] is the desktop's own `text-anchor`: 0 is `start`, 0.5 `middle`, 1 `end`.  The
+ * desktop positions text by its baseline and Compose by its box, so the baseline is
+ * recovered from the layout rather than guessed at -- a tick label a few pixels out is a
+ * label that reads as belonging to the line next to the one it measures.
+ */
+private fun DrawScope.drawPlotLabel(
+    measurer: TextMeasurer,
+    text: String,
+    x: Float,
+    baselineY: Float,
+    anchor: Float,
+    colour: Color,
+    size: TextUnit,
+) {
+    val layout = measurer.measure(text, TextStyle(color = colour, fontSize = size))
+    drawText(
+        layout,
+        topLeft = Offset(
+            x - anchor * layout.size.width.toFloat(),
+            baselineY - layout.getLineBaseline(0),
+        ),
+    )
+}
+
+/**
+ * The points the capacity plot draws, in radius order, or empty for nothing to draw.
+ *
+ * **A pure function rather than points built inside the composable**, for the reason
+ * `chartTable` is one: which points are plotted, and which of them are the same point
+ * twice, is exactly the kind of thing that draws plausibly while being wrong.
+ *
+ * The desktop's own two sources, in its own order.  The workbook's chart at the selected
+ * boom comes first, because it is the chart the capacities were read from, and the manual
+ * entry's point is added only where the chart does not already chart that radius -- a
+ * radius charted twice would be a dot drawn twice, and two capacities at one radius would
+ * make the curve double back on itself.
+ *
+ * Empty for fewer than two points: a picture of one point is a dot on an empty grid, and
+ * the desktop draws nothing at all in that case.  It is also what a hand-typed chart looks
+ * like, which is the answer rather than a gap -- one charted point is not a curve.
+ */
+internal fun capacityPlot(
+    chartPoints: List<Pair<Double, Double>>,
+    entryPoints: List<Pair<Double, Double>>,
+): List<Pair<Double, Double>> {
+    val seen = mutableSetOf<Double>()
+    val points = mutableListOf<Pair<Double, Double>>()
+    for (point in chartPoints + entryPoints) {
+        if (point.first > 0 && point.second > 0 && seen.add(point.first)) points.add(point)
+    }
+    points.sortBy { it.first }
+    return if (points.size < 2) emptyList() else points
+}
+
+/**
+ * The next axis maximum above [value]: 2, 5 or 10 times a power of ten.
+ *
+ * The desktop's `niceMax`, and it is what keeps the four grid divisions on whole figures
+ * -- a grid labelled 0.37, 0.75, 1.12 is a grid no capacity can be read off.  A
+ * non-positive maximum returns 1 rather than 0, so the scale can never divide by zero.
+ */
+internal fun niceMax(value: Double): Double {
+    if (value <= 0.0) return 1.0
+    val power = 10.0.pow(floor(log10(value)))
+    val scaled = value / power
+    val step = if (scaled <= 2.0) 2.0 else if (scaled <= 5.0) 5.0 else 10.0
+    return step * power
+}
+
+/** A grid label's figure, as the desktop's own `toFixed(0)` prints it. */
+private fun whole(value: Double): String = String.format(Locale.US, "%.0f", value)
+
+/**
+ * A jib chart's angle: whole degrees where it is whole, one decimal where it is not.
+ *
+ * The desktop labels an integer angle `25` and a fractional one `25.5`, because a chart's
+ * own angles are round figures and an angle the graph has published is not.
+ */
+private fun angleLabel(value: Double): String =
+    Figures.fmt(value, if (value == floor(value)) 0 else 1, "\u00b0")
+
+/**
+ * A figure as the desktop's own template string prints it.
+ *
+ * `crane.js` writes the assembly and the crane's position with `${value}`, which is
+ * JavaScript's `String(number)`: the shortest form that round-trips, so 31 reads `31` and
+ * 7.2 reads `7.2` -- not the `31.00` this screen pads every other figure to.  A boom
+ * column reading `31.00+7.20` is an assembly the desktop does not have, and the position
+ * line is read back against the workbook's own axis, where `(-1.70, 2.80)` and
+ * `(-1.7, 2.8)` are one point written two ways.
+ *
+ * Java's `Double.toString` prints a whole number as `31.0` where JavaScript prints `31`,
+ * so that one suffix is what gets removed.
+ */
+private fun plainNumber(value: Double): String = value.toString().removeSuffix(".0")
+
+/**
+ * The boom column's content while a jib is fitted, or null for an ordinary length.
+ *
+ * The workbook's own boom and the jib the configuration selected, **joined** as the
+ * desktop joins them -- `31+7.2` rather than 38.2.  The two are not added because an
+ * assembly is not a longer boom: the jib hangs off the boom's tip at an offset, it does
+ * not extend it, and a single number in that column would describe a crane with no jib
+ * on it while the capacity beside it came from one.
+ *
+ * Null in the two cases the column is an ordinary length: with the main boom selected
+ * there is no jib to show, and a jib length of zero is no jib fitted at all.
+ *
+ * A pure function rather than an expression in the screen body, so "is this an assembly,
+ * and what does it read" has one answer rather than one per caller.
+ */
+private fun boomAssembly(row: ChartRow, jibActive: Boolean, jibLength: Double?): String? {
+    if (!jibActive) return null
+    val jib = jibLength?.takeIf { it != 0.0 } ?: return null
+    return "${plainNumber(row.boom)}+${plainNumber(jib)}"
+}
