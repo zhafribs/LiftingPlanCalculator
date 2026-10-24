@@ -24,19 +24,15 @@ local.properties
 
 # Release signing material.
 #
-# THIS IS TRACKED.  `lifting-plan-release.jks` and `keystore.properties` are both
-# committed, which was a deliberate decision by the operator after being told what it
-# means: anyone who can read this repository can sign an update that Android accepts
-# as this app, and repository history is permanent -- removing them in a later commit
-# does not take them out of the earlier ones.
+# `lifting-plan-release.jks` and `keystore.properties` sit in the working tree and
+# are NOT tracked.  They were committed once, back when this repository was private;
+# that history was rewritten to delete them before the repository was made public.
+# See the README for how to restore them.
 #
-# It is only defensible because this repository is private.  If that ever changes,
-# this is the first thing to deal with.
-#
-# The rules stay, even though they no longer match the two files above (git ignores
-# nothing that is already tracked).  They are here for the *next* key: a new keystore
-# added to this directory should not be committed by accident, because by then nobody
-# will remember that this decision was made once, for these particular files.
+# They must never come back.  Anyone who can read this repository could otherwise
+# sign an update that Android accepts as this app, and repository history is
+# permanent -- removing a file in a later commit does not take it out of the earlier
+# ones.  Rewriting history is the only way back out, and it invalidates every clone.
 keystore.properties
 *.jks
 *.keystore
@@ -64,8 +60,10 @@ keystore.properties
 # refuses to build without it.  A clone without it cannot be built, which is exactly
 # what this repository exists to avoid.
 #
-# That does make this repository's visibility a decision rather than a detail.  Keep
-# it private, or restrict the key in the Google Cloud console.
+# It is the key's restrictions, not this repository's visibility, that protect it.
+# This repository is **public** now, so the key in here must stay restricted by
+# package name and signing certificate in the Google Cloud console.  Verify that it
+# is, and leave it that way.
 #
 # The copy at the **root** is not committed: it is a stale duplicate.  The plugin
 # only ever reads the module's, and having two is how a working config once got

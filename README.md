@@ -35,6 +35,12 @@ succeeds, it simply produces an unsigned release APK. Restore them from your
 backup before cutting a release — **losing the keystore means you can never update
 the app under its existing Play listing again.**
 
+Those two files were committed to this repository once, back when it was private.
+That history has since been rewritten to remove them, which is why `git log` will
+not show them even though the working tree still has them, and why `.gitignore`
+lists them. Never commit them again: a keystore committed once stays reachable in
+every commit that came after it.
+
 ## Build and test
 
 ```bash
@@ -73,9 +79,11 @@ It **is** committed, because Google's guidance is that it is not a secret and
 because the build cannot run without it. The API key inside it is restricted by
 package name and signing certificate.
 
-That makes this repository's visibility a decision rather than a detail. It is kept
-**private**, which is what lets the Firebase config, and the encrypted signing backup
-beside it, live here at all.
+The key's restrictions are what protect it, not the repository's visibility: it is
+scoped to this package name and signing certificate in the Google Cloud console, so
+the file alone is useless without the matching key. This repository is **public**,
+which means those restrictions are doing all of the work — check them periodically
+and never loosen them.
 
 ---
 
