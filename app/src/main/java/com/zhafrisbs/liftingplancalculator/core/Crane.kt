@@ -150,7 +150,22 @@ data class CraneInputs(
      */
     val boomAngleDeg: Double? = null,
 ) {
-    /** Whether a jib configuration is selected, rather than the main boom alone. */
+    /**
+     * Whether a jib configuration is selected, rather than the main boom alone.
+     *
+     * **Invariant:** `jibConfig != "boom"` implies `chartSource == "excel"`.  The only
+     * writer of a non-`boom` configuration is `ExcelImport.jibChanged`, which is
+     * reachable only through `chooseJib`, and that returns early unless a workbook
+     * chart is loaded.  Four user-visible sites rest on this: the jib card's radios and
+     * readouts, the jib capacity row, the capacity plot's suppression while a jib is
+     * fitted, and the assembly radius the report prints in place of the working radius.
+     * A non-`boom` configuration over a hand-typed chart would break the last of those
+     * in particular, publishing an assembly radius no chart stands behind.
+     *
+     * Deliberately not written as a conjunct (`jibConfig == "boom" || chartSource ==
+     * "excel"`): the disallowed state is unreachable, and the reference's own predicate
+     * is equally bare.
+     */
     val jibActive: Boolean
         get() = jibConfig == "boom_jib" || jibConfig == "boom_ext_jib"
 
