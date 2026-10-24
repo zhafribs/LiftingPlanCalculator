@@ -198,7 +198,9 @@ Expected: FAIL — `CraneInputs` has no `chartJibs`.
 
 - [ ] **Step 4: Implement the four helpers and thread the fields through `applied` / `boomChanged` / `radiusChanged` / `forgetChart`**
 
-`applied` must populate `chartPosition`, `chartJibs`, `jibConfig = "boom"`. A boom or radius change must not clear the jib. `forgetChart` clears them all.
+`applied` must populate `chartPosition`, `chartJibs`, `jibConfig = "boom"`. **A boom change resets the jib selection**, because the reference's `boom_changed` delegates straight to `applied` (`excel.rs:1037-1044`); a **radius** change keeps it. `forgetChart` clears them all.
+
+*(Corrected after implementation. This step originally read "A boom or radius change must not clear the jib", which contradicted the reference. The implementer escalated the contradiction and followed the reference; the prose was wrong, not the code.)*
 
 - [ ] **Step 5: Run the tests**
 
@@ -346,7 +348,9 @@ Shown only when `inputs.chartJibs.isNotEmpty()`. Three radios (`Boom length`, `B
 
 - [ ] **Step 4: Hide the working-radius picker while a jib is active, and show the assembly in the boom column**
 
-Gate the existing `Working Radius & Boom Length` card on `!inputs.jibActive`. With a jib, the manual entry's boom field displays `30+7.2` and is not directly editable; the desktop's text is authoritative.
+Hide **only the radius picker**, as the desktop does (`crane.js`'s `radiusWrap.style.display = radii.length && !jibActive ? "" : "none"`). The **boom picker stays visible**: on the desktop the boom can still be changed with a jib fitted, and doing so resets the jib selection (`applied`), which the operator sees as the jib card resetting. With a jib, the manual entry's boom field displays `30+7.2` and is not directly editable; the desktop's text is authoritative.
+
+*(Corrected after implementation. This step originally gated the whole `Working Radius & Boom Length` card on `!jibActive`. That hid a control the reference offers, which is a functional difference rather than cosmetic - the phone's set of possible outcomes was smaller than the desktop's. Parity governs.)*
 
 - [ ] **Step 5: Add the jib result rows**
 
