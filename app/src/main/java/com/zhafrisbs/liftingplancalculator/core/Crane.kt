@@ -45,9 +45,9 @@ enum class ChartColumn(
     val max: Double,
 ) {
     RADIUS("radius", "Radius", "m", 2, 0.0, 200.0),
-    CAPACITY("capacity", "Rated Load", "kg", 0, 0.0, 1.0e7),
-    ANGLE("angle", "Boom Angle", "deg", 1, 0.0, 90.0),
-    BOOM("boom", "Boom Length", "m", 2, 0.0, 200.0),
+    CAPACITY("capacity", "Rated load", "kg", 0, 0.0, 1.0e7),
+    ANGLE("angle", "Boom angle", "deg", 1, 0.0, 90.0),
+    BOOM("boom", "Boom length", "m", 2, 0.0, 200.0),
 }
 
 /**

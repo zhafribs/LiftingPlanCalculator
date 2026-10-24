@@ -169,7 +169,7 @@ internal fun CraneGraphScreen(viewModel: LiftViewModel, modifier: Modifier = Mod
             style = MaterialTheme.typography.bodySmall,
         )
 
-        SectionCard(title = "Working Range") {
+        SectionCard(title = "Working range diagram") {
             GraphDiagram(
                 state = state,
                 showDimensions = showDimensions,
@@ -198,7 +198,7 @@ internal fun CraneGraphScreen(viewModel: LiftViewModel, modifier: Modifier = Mod
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { fitTick++ }) { Text("Fit to view") }
+                TextButton(onClick = { fitTick++ }) { Text("Fit view") }
             }
             // The card's note, which is the desktop's `renderNote` (graph.js:814): the
             // caption, or — once the operator has dragged the diagram away from the
@@ -409,7 +409,7 @@ private fun readoutRows(state: CraneGraphState, r: CraneReadouts): List<ResultRo
             "Jib offset angle",
             if (r.jibActive) "${fixed(state.jibOffset, 1)} deg" else Figures.NOTHING,
         ),
-        ResultRowData("Working radius", "${fixed(r.workingRadius, 2)} m"),
+        ResultRowData("Working radius (from X axis)", "${fixed(r.workingRadius, 2)} m"),
         ResultRowData("Tip height above ground", "${fixed(r.tipHeight, 2)} m"),
         ResultRowData("Tip height above crane", "${fixed(r.heightAboveCrane, 2)} m"),
         ResultRowData("Envelope radius", "${fixed(r.envelopeRadius, 2)} m"),

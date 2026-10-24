@@ -182,7 +182,7 @@ fun CraneScreen(
                 hint = "e.g. Kobelco CKE90G-2",
             )
             NumberField(
-                label = "Crane Rated Capacity",
+                label = "Crane rated capacity",
                 value = inputs.capacityT,
                 onValueChange = { viewModel.updateCraneInputs(inputs.copy(capacityT = it)) },
                 unit = "ton",
@@ -192,7 +192,7 @@ fun CraneScreen(
         }
 
         SectionCard(
-            title = "Load Chart (Excel)",
+            title = "Load chart \u2014 Excel workbook",
             note = if (inputs.chartLabel.isNotEmpty()) inputs.chartLabel else null,
         ) {
             Button(
@@ -215,7 +215,7 @@ fun CraneScreen(
         // ManualChartRow.  There is no `+` and no delete, because a load chart
         // entry is one charted point rather than a table.
         SectionCard(
-            title = "Load Chart (Manual Entry)",
+            title = "Load chart \u2014 manual entry",
             note = "Typing here switches the chart back to this line.",
         ) {
             val row = inputs.rows.firstOrNull() ?: ChartRow()
@@ -272,7 +272,7 @@ fun CraneScreen(
                 // as a fault rather than as a consequence.
                 if (inputs.chartBooms.size > 1) {
                     DropdownField(
-                        label = "Boom Length",
+                        label = "Boom length",
                         options = inputs.chartBooms,
                         selected = inputs.chartBoom ?: inputs.chartBooms.last(),
                         optionLabel = { metres(it) },
@@ -281,7 +281,7 @@ fun CraneScreen(
                 }
                 if (!inputs.jibActive && inputs.chartRadii.isNotEmpty()) {
                     DropdownField(
-                        label = "Working Radius",
+                        label = "Working radius",
                         options = inputs.chartRadii,
                         selected = nearest(inputs.chartRadii, inputs.workingRadius),
                         optionLabel = { metres(it) },
@@ -432,7 +432,7 @@ fun CraneScreen(
             CapacityCheckFailure(craneError)
         } else {
             ResultCard(
-                title = "Capacity Check",
+                title = "Capacity check",
                 rows = listOfNotNull(
                     ResultRowData(
                         "Crane",
@@ -515,7 +515,7 @@ fun CraneScreen(
                     // sling load, which is a different figure and lives on the Uniform
                     // tab.
                     ResultRowData(
-                        "Overall weight",
+                        "Gross load at hook",
                         Figures.fmt(totals.gross.takeIf { it > 0 }, 2, "kg"),
                     ),
                     ResultRowData(
