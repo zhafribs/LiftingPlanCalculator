@@ -11,6 +11,7 @@ import com.zhafrisbs.liftingplancalculator.core.DEFAULT_STATE
 import com.zhafrisbs.liftingplancalculator.core.GeometryException
 import com.zhafrisbs.liftingplancalculator.core.GraphPoint
 import com.zhafrisbs.liftingplancalculator.core.angleForTip
+import com.zhafrisbs.liftingplancalculator.core.angleForWorkingRadius
 import com.zhafrisbs.liftingplancalculator.core.assemblyTip
 import com.zhafrisbs.liftingplancalculator.core.boomTip
 import com.zhafrisbs.liftingplancalculator.core.clamp
@@ -21,29 +22,33 @@ import com.zhafrisbs.liftingplancalculator.core.normalizeAngle
 import com.zhafrisbs.liftingplancalculator.core.readouts
 import com.zhafrisbs.liftingplancalculator.core.tipForState
 import com.zhafrisbs.liftingplancalculator.core.tipOffsetFromPivot
+import com.zhafrisbs.liftingplancalculator.core.workingRadius
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pins the working-range geometry to the reference's own output.
+ * Pins the working-range geometry to the desktop's own output.
  *
- * Every expectation below was printed by running `crane_graph/geometry.py` directly
- * under plain `python3` — the module is deliberately Qt-free so it can be, and the
- * extracted AppImage's copy is the only one that survived:
+ * Every expectation below was printed by executing the desktop's own
+ * `ui/js/graph/geometry.js` under `node` — the module is plain ES-module
+ * JavaScript with no Qt or browser dependency, so it runs directly:
  *
- *     python3 -c "import importlib.util as u; s=u.spec_from_file_location('geometry', \
- *         '<...>/crane_graph/geometry.py'); g=u.module_from_spec(s); s.loader.exec_module(g); \
- *         print(g.readouts(g.DEFAULT_STATE))"
+ *     node --input-type=module -e "import * as geo from \
+ *         '/mnt/backup/Appimage Projects/lifting-plan-calculator-v2/ui/js/graph/geometry.js'; \
+ *         console.log(geo.readouts(geo.DEFAULT_STATE))"
  *
- * That is the point of this file, and it is the same reason `CraneTest` exists.  A
- * test written from the same reading of the source as the code it checks agrees with
- * the code whether or not either is right, so the numbers here come from *executing*
- * the original rather than from transcribing it.  The four-decimal figures
- * (`21.213203435596427`) are raw `repr()` output, not tidied up: rounding them would
- * throw away exactly the agreement being asserted.
+ * The desktop deliberately diverged from the original `crane_graph/geometry.py`
+ * that this project's earlier code followed: its jib offset **lowers** the jib and
+ * its working radius is measured from the `x = 0` axis rather than from the crane.
+ * The literals here therefore come from *executing the desktop module*, not from
+ * either source's prose, so a test written from the same reading of the code as the
+ * code it checks cannot agree with a shared mistake.  The full-precision figures
+ * (`21.213203435596427`) are raw output, not tidied up: rounding them would throw
+ * away exactly the agreement being asserted.
  */
 class CraneGraphTest {
 
@@ -128,10 +133,10 @@ class CraneGraphTest {
         assertEquals(12.0, r.jibLength, 0.0)
         assertEquals(25.98076211353316, r.boomEnd.x, 1e-12)
         assertEquals(14.999999999999998, r.boomEnd.y, 1e-12)
-        assertEquals(34.46604348777173, r.tip.x, 1e-12)
-        assertEquals(23.485281374238568, r.tip.y, 1e-12)
-        assertEquals(34.46604348777173, r.workingRadius, 1e-12)
-        assertEquals(23.485281374238568, r.heightAboveCrane, 1e-12)
+        assertEquals(37.57187202900198, r.tip.x, 1e-12)
+        assertEquals(18.105828541230245, r.tip.y, 1e-12)
+        assertEquals(37.57187202900198, r.workingRadius, 1e-12)
+        assertEquals(18.105828541230245, r.heightAboveCrane, 1e-12)
         assertEquals(41.706913035228695, r.envelopeRadius, 1e-12)
         assertFalse(r.belowGround)
     }
@@ -146,17 +151,17 @@ class CraneGraphTest {
         assertEquals(24.0, r.jibLength, 0.0)
         assertEquals(15.000000000000004, r.boomEnd.x, 1e-12)
         assertEquals(25.980762113533157, r.boomEnd.y, 1e-12)
-        assertEquals(30.42690263247695, r.tip.x, 1e-12)
-        assertEquals(44.36582874838863, r.tip.y, 1e-12)
-        assertEquals(30.42690263247695, r.workingRadius, 1e-12)
-        assertEquals(53.797055350061484, r.envelopeRadius, 1e-12)
+        assertEquals(23.208483439816057, r.tip.x, 1e-12)
+        assertEquals(48.53338501239496, r.tip.y, 1e-12)
+        assertEquals(23.208483439816057, r.workingRadius, 1e-12)
+        assertEquals(53.79705535006148, r.envelopeRadius, 1e-12)
     }
 
     @Test
     fun tipForStateFollowsTheConfigurationAndTheOffset() {
         val tip = tipForState(DEFAULT_STATE.copy(config = CONFIG_BOOM_JIB, jibOffset = 15.0, angle = 30.0))
-        assertEquals(34.46604348777173, tip.x, 1e-12)
-        assertEquals(23.485281374238568, tip.y, 1e-12)
+        assertEquals(37.57187202900198, tip.x, 1e-12)
+        assertEquals(18.105828541230245, tip.y, 1e-12)
     }
 
     // -----------------------------------------------------------------------
@@ -175,11 +180,11 @@ class CraneGraphTest {
 
         val offset = tipOffsetFromPivot(30.0, 12.0, 15.0)
         assertEquals(41.59110991546882, offset.x, 1e-12)
-        assertEquals(3.105828541230249, offset.y, 1e-12)
+        assertEquals(-3.105828541230249, offset.y, 1e-12)
 
         assertEquals(42.0, envelopeRadius(30.0, 12.0, 0.0), 1e-12)
         assertEquals(41.706913035228695, envelopeRadius(30.0, 12.0, 15.0), 1e-12)
-        assertEquals(53.797055350061484, envelopeRadius(30.0, 24.0, -10.0), 1e-12)
+        assertEquals(53.79705535006148, envelopeRadius(30.0, 24.0, -10.0), 1e-12)
     }
 
     @Test
@@ -281,6 +286,34 @@ class CraneGraphTest {
         val r = readouts(DEFAULT_STATE.copy(angle = 0.0))
         assertFalse(r.belowGround)
         assertEquals(0.0, r.tipHeight, 0.0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Review focus
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun theWorkingRadiusIsMeasuredFromTheAxisNotTheCrane() {
+        // The desktop measures the load chart's radii from the x = 0 axis, not from
+        // the crane's own position.  With the crane off the axis at -1.7 m and the
+        // tip 15 m to its right, the working radius is the tip's x -- 13.3 m -- and
+        // not the 15 m the pivot-relative basis would have given.
+        val pivot = GraphPoint(-1.7, 2.8)
+        val tip = boomTip(pivot, 30.0, 60.0)
+        assertEquals(13.300000000000004, workingRadius(tip), 1e-12)
+        assertNotEquals(15.0, workingRadius(tip), 1e-9)
+    }
+
+    @Test
+    fun angleForWorkingRadiusIsTheInverseOfTheTipReach() {
+        // `angleForWorkingRadius` answers "what boom angle puts the tip at this
+        // radius?", the inverse of the horizontal reach.  Checked against the
+        // desktop's own output for a 30 m boom and a 23.4 m radius.
+        assertEquals(
+            56.14156334054405,
+            angleForWorkingRadius(30.0, 12.0, 0.0, 23.4),
+            1e-12,
+        )
     }
 
     // -----------------------------------------------------------------------

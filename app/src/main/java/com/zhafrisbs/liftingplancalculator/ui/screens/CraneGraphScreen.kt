@@ -19,13 +19,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,7 +58,6 @@ import com.zhafrisbs.liftingplancalculator.core.CONFIG_LABELS
 import com.zhafrisbs.liftingplancalculator.core.CONFIGS
 import com.zhafrisbs.liftingplancalculator.core.CraneGraphState
 import com.zhafrisbs.liftingplancalculator.core.CraneReadouts
-import com.zhafrisbs.liftingplancalculator.core.DEFAULT_STATE
 import com.zhafrisbs.liftingplancalculator.core.Figures
 import com.zhafrisbs.liftingplancalculator.core.GeometryException
 import com.zhafrisbs.liftingplancalculator.core.GraphPoint
@@ -74,6 +72,7 @@ import com.zhafrisbs.liftingplancalculator.core.readouts
 import com.zhafrisbs.liftingplancalculator.core.tipForState
 import com.zhafrisbs.liftingplancalculator.core.tipHeight
 import com.zhafrisbs.liftingplancalculator.core.workingRadius
+import com.zhafrisbs.liftingplancalculator.ui.LiftViewModel
 import com.zhafrisbs.liftingplancalculator.ui.components.DropdownField
 import com.zhafrisbs.liftingplancalculator.ui.components.NumberField
 import com.zhafrisbs.liftingplancalculator.ui.components.ResultCard
@@ -112,17 +111,49 @@ import kotlin.math.sin
  * exactly as `_apply`'s `not self.canvas.is_dragging()` guard does.
  */
 @Composable
-internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
-    // Saveable rather than a ViewModel: this tab's shape is not part of the lift, and
-    // the only thing it has to survive is a rotation.  A plan lost to a sideways phone
-    // is the failure the rest of the app already designs against, and a diagram that
-    // reset to 45 degrees would be the same fault in a smaller place.
-    var state by rememberSaveable(stateSaver = CraneGraphStateSaver) { mutableStateOf(DEFAULT_STATE) }
+internal fun CraneGraphScreen(viewModel: LiftViewModel, modifier: Modifier = Modifier) {
+    // The diagram's own state is the ViewModel's, not this screen's.  The desktop keeps
+    // one `state.crane` that both tabs read and write, and that one state *is* "the
+    // diagram follows the workbook" — with the diagram remembering its own copy there
+    // was nothing for either tab to follow.  It is also what makes a rotation cheap: the
+    // ViewModel outlives the screen, so the dragged position, the deviation and the
+    // sync's bookkeeping all come back with it rather than being re-derived.
+    val state = viewModel.graphState
+    val deviated = viewModel.graphDeviated
     var showDimensions by rememberSaveable { mutableStateOf(true) }
     // Bumped by "Fit to view".  A counter rather than a boolean because the control
     // exists to *repeat* an action, and a flag would fire only the first press.
     var fitTick by rememberSaveable { mutableIntStateOf(0) }
     val readout = readouts(state)
+
+    // **The sync, and why it is an event rather than a watcher.**
+    //
+    // The desktop's `sync()` (graph.js:1094) is run by `app.js`'s `go()` when the tab is
+    // opened, and by the store subscription when the Crane tab's inputs change beneath
+    // it.  On a phone those two collapse into one: this screen exists only while its tab
+    // is selected, and the Crane tab's own inputs can only change while *that* tab is
+    // selected — so opening this tab is the only moment the diagram can have missed a
+    // change, and entering it is the whole of the sync.
+    //
+    // That is not a stylistic preference.  The desktop's re-pull condition is its own
+    // bookkeeping — the chassis key, the reading key and `deviated` — and it lives in
+    // `applyWorkbook`, where it is evaluated against values no composable can see.  An
+    // effect keyed on `craneInputs` would fire *during* a drag, because a drag publishes
+    // its angle back into those very inputs: the operator's own gesture would trigger a
+    // re-pull that clears the deviation it has just recorded, and "Reset to Crane Tab"
+    // would never be offered at all.
+    LaunchedEffect(Unit) {
+        // `applyWorkbook` hands back the desktop's own fit signal, `chassisChanged &&
+        // autoFit` (and `autoFit` is pinned on here, as the note above the diagram
+        // records).  The camera below is refitted whenever `graphState` changes, which is
+        // every change that signal can name, so forcing the counter is all that is left
+        // for it to do: it re-fits for the one case the state cannot show — a chassis
+        // that moved while the diagram came out identical.
+        if (viewModel.applyWorkbook(fit = true)) fitTick++
+        // The desktop's `syncFromWorkbook` publishes as its last act, and that is what
+        // keeps the two tabs agreeing after a pull.
+        viewModel.publishAngle()
+    }
 
     Column(
         modifier = modifier
@@ -132,19 +163,25 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(
-            text = "Drag the boom tip to set the boom angle, and the crane marker to " +
-                "move it on the XY axis. The view stays fitted to the working range.",
+            text = "Drag the boom tip to set the angle; drag the crane marker to set (X, Y); " +
+                "the wheel zooms; double-click fits the view.",
             color = TextMuted,
             style = MaterialTheme.typography.bodySmall,
         )
 
-        SectionCard(title = "Working Range") {
+        SectionCard(title = "Working range diagram") {
             GraphDiagram(
                 state = state,
                 showDimensions = showDimensions,
                 fitTick = fitTick,
-                onAngle = { state = state.copy(angle = it) },
-                onCrane = { x, y -> state = state.copy(craneX = x, craneY = y) },
+                // Both of the diagram's gestures are the reference's `apply(patch,
+                // {user: true})`: the operator did it, so it marks the departure from the
+                // Crane tab and publishes the angle straight back to it.  That flag is
+                // *the* distinction the desktop's sync turns on — a workbook pull carries
+                // `user: false` and marks nothing — so every control on this screen goes
+                // through the user path rather than writing the state directly.
+                onAngle = { viewModel.updateGraphState(state.copy(angle = it)) },
+                onCrane = { x, y -> viewModel.updateGraphCranePosition(x, y) },
                 modifier = Modifier.fillMaxWidth().height(360.dp),
             )
             Row(
@@ -161,7 +198,22 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { fitTick++ }) { Text("Fit to view") }
+                TextButton(onClick = { fitTick++ }) { Text("Fit view") }
+            }
+            // The card's note, which is the desktop's `renderNote` (graph.js:814): the
+            // caption, or — once the operator has dragged the diagram away from the
+            // workbook — the way back.  One slot rather than two, so the line the eye
+            // already goes to is the one that changes.
+            if (deviated) {
+                TextButton(onClick = { viewModel.resetGraphToCrane() }) {
+                    Text("Reset to Crane Tab")
+                }
+            } else {
+                Text(
+                    text = "Drawn to scale, metres",
+                    color = TextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
 
@@ -182,7 +234,20 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 options = CONFIGS,
                 selected = state.config,
                 optionLabel = { CONFIG_LABELS[it] ?: it },
-                onSelected = { state = state.copy(config = it) },
+                // graph.js:936.  With a workbook loaded the configuration belongs to the
+                // Crane tab, so the choice is written through to the shared state — and
+                // `chooseJib` re-syncs the diagram from it, which is how the requested
+                // configuration lands in `state` without a second write here.  Without a
+                // workbook it is this screen's own choice, and `updateGraphState` is the
+                // reference's plain `apply({config})`: a configuration is a choice, not
+                // a departure from the Crane tab, so it marks no deviation.
+                onSelected = { config ->
+                    if (viewModel.graphFollowsWorkbook) {
+                        viewModel.chooseJib(config = config)
+                    } else {
+                        viewModel.updateGraphState(state.copy(config = config))
+                    }
+                },
             )
             // The limits are the desktop's own spin-box ranges, carried across
             // unchanged: 1-150 m boom, 0-60 m jib, 0-80 m extended jib, -30 to 60
@@ -190,7 +255,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
             NumberField(
                 label = "Boom length",
                 value = state.boomLength,
-                onValueChange = { state = state.copy(boomLength = it) },
+                onValueChange = { viewModel.updateGraphState(state.copy(boomLength = it)) },
                 unit = "m",
                 decimals = 1,
                 min = 1.0,
@@ -200,7 +265,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 NumberField(
                     label = "Jib length",
                     value = state.jibLength,
-                    onValueChange = { state = state.copy(jibLength = it) },
+                    onValueChange = { viewModel.updateGraphState(state.copy(jibLength = it)) },
                     unit = "m",
                     decimals = 1,
                     min = 0.0,
@@ -211,7 +276,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 NumberField(
                     label = "Extended jib length",
                     value = state.extJibLength,
-                    onValueChange = { state = state.copy(extJibLength = it) },
+                    onValueChange = { viewModel.updateGraphState(state.copy(extJibLength = it)) },
                     unit = "m",
                     decimals = 1,
                     min = 0.0,
@@ -222,7 +287,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 NumberField(
                     label = "Jib offset angle",
                     value = state.jibOffset,
-                    onValueChange = { state = state.copy(jibOffset = it) },
+                    onValueChange = { viewModel.updateGraphState(state.copy(jibOffset = it)) },
                     unit = "deg",
                     decimals = 1,
                     min = -30.0,
@@ -235,7 +300,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
             NumberField(
                 label = "Boom angle",
                 value = state.angle,
-                onValueChange = { state = state.copy(angle = it) },
+                onValueChange = { viewModel.updateGraphState(state.copy(angle = it)) },
                 unit = "deg",
                 decimals = 1,
                 min = ANGLE_MIN,
@@ -250,9 +315,11 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 label = "Envelope from",
                 value = state.envMin,
                 onValueChange = { v ->
-                    state = state.copy(envMin = v).let {
-                        if (it.envMin > it.envMax) it.copy(envMax = it.envMin) else it
-                    }
+                    viewModel.updateGraphState(
+                        state.copy(envMin = v).let {
+                            if (it.envMin > it.envMax) it.copy(envMax = it.envMin) else it
+                        },
+                    )
                 },
                 unit = "deg",
                 decimals = 1,
@@ -263,9 +330,11 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                 label = "Envelope to",
                 value = state.envMax,
                 onValueChange = { v ->
-                    state = state.copy(envMax = v).let {
-                        if (it.envMax < it.envMin) it.copy(envMin = it.envMax) else it
-                    }
+                    viewModel.updateGraphState(
+                        state.copy(envMax = v).let {
+                            if (it.envMax < it.envMin) it.copy(envMin = it.envMax) else it
+                        },
+                    )
                 },
                 unit = "deg",
                 decimals = 1,
@@ -283,7 +352,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                     NumberField(
                         label = "Position X",
                         value = state.craneX,
-                        onValueChange = { state = state.copy(craneX = it) },
+                        onValueChange = { viewModel.updateGraphState(state.copy(craneX = it)) },
                         unit = "m",
                         decimals = 1,
                         min = -100.0,
@@ -294,7 +363,7 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                     NumberField(
                         label = "Position Y",
                         value = state.craneY,
-                        onValueChange = { state = state.copy(craneY = it) },
+                        onValueChange = { viewModel.updateGraphState(state.copy(craneY = it)) },
                         unit = "m",
                         decimals = 1,
                         min = -50.0,
@@ -302,25 +371,13 @@ internal fun CraneGraphScreen(modifier: Modifier = Modifier) {
                     )
                 }
             }
-            // The desktop's four quick positions.  Kept because dragging is the only
-            // other way to move the crane now that the view cannot be panned, and a
-            // finger is a poor instrument for landing on exactly (0, 0).
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Quick:",
-                    color = TextMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                CRANE_PRESETS.forEach { (x, y) ->
-                    TextButton(onClick = { state = state.copy(craneX = x, craneY = y) }) {
-                        Text("(${general(x)}, ${general(y)})")
-                    }
-                }
-            }
+            // The desktop's four quick positions ("Quick: (-3, 0) (0, 0) (0, 3) (3, 0)")
+            // are dropped.  They exist to land the crane on a round figure a mouse cannot
+            // hit, and they are a *plain* patch there — no deviation, no publish — so
+            // under a workbook the next sync re-pulls the diagram and overwrites the
+            // position they set: a control whose effect the workbook immediately undoes.
+            // The marker's drag is the whole of the position's surface here, and it is
+            // the one that records the departure and offers the way back.
         }
 
         ResultCard(title = "Readout", rows = readoutRows(state, readout))
@@ -352,7 +409,7 @@ private fun readoutRows(state: CraneGraphState, r: CraneReadouts): List<ResultRo
             "Jib offset angle",
             if (r.jibActive) "${fixed(state.jibOffset, 1)} deg" else Figures.NOTHING,
         ),
-        ResultRowData("Working radius", "${fixed(r.workingRadius, 2)} m"),
+        ResultRowData("Working radius (from X axis)", "${fixed(r.workingRadius, 2)} m"),
         ResultRowData("Tip height above ground", "${fixed(r.tipHeight, 2)} m"),
         ResultRowData("Tip height above crane", "${fixed(r.heightAboveCrane, 2)} m"),
         ResultRowData("Envelope radius", "${fixed(r.envelopeRadius, 2)} m"),
@@ -377,10 +434,6 @@ private fun readoutRows(state: CraneGraphState, r: CraneReadouts): List<ResultRo
 
 /** Which handle a gesture has hold of. */
 private enum class DragTarget { NONE, TIP, CRANE }
-
-/** The desktop's four quick crane positions. */
-private val CRANE_PRESETS: List<Pair<Double, Double>> =
-    listOf(-3.0 to 0.0, 0.0 to 0.0, 0.0 to 3.0, 3.0 to 0.0)
 
 /**
  * The view transform: pixels per metre and the world point at the canvas centre.
@@ -889,35 +942,46 @@ private fun DrawScope.drawEnvelope(camera: Camera, state: CraneGraphState, measu
 }
 
 private fun DrawScope.drawDimensions(camera: Camera, state: CraneGraphState, measurer: TextMeasurer) {
-    val pivot = GraphPoint(state.craneX, state.craneY)
     val tip = tipForState(state)
-    val pivotScreen = camera.toScreen(pivot)
+    val pivotY = camera.toScreen(GraphPoint(state.craneX, state.craneY)).y
     val tipScreen = camera.toScreen(tip)
+    // **The radius is measured from the axis, not from the crane.**  The load charts'
+    // radii are, `workingRadius` is, and the `R` pill below prints that figure — so the
+    // dimension line has to start where the measurement starts, or the drawing states a
+    // radius its own line does not measure.  The two only coincide while the crane sits
+    // at x = 0, which a workbook position now makes rare.
+    val axisX = camera.toScreen(GraphPoint(0.0, 0.0)).x
     val groundY = camera.toScreen(GraphPoint(0.0, 0.0)).y
 
-    // Working radius: a dashed horizontal from the pivot across to the tip's own X,
-    // with a tick at the far end.  Horizontal because that is the quantity — the
-    // radius is the horizontal distance, and a line drawn along the boom would be
-    // measuring the boom.
+    // Working radius: a dashed horizontal from the x = 0 axis across to the tip's own
+    // X, with a tick at each end.  Horizontal because that is the quantity — the radius
+    // is the horizontal distance, and a line drawn along the boom would be measuring the
+    // boom.
     drawLine(
         DimRadiusColour,
-        pivotScreen,
-        Offset(tipScreen.x, pivotScreen.y),
+        Offset(axisX, pivotY),
+        Offset(tipScreen.x, pivotY),
         strokeWidth = 1f,
         pathEffect = AxisDash,
     )
     drawLine(
         DimRadiusColour,
-        Offset(tipScreen.x, pivotScreen.y - 5f),
-        Offset(tipScreen.x, pivotScreen.y + 5f),
+        Offset(tipScreen.x, pivotY - 5f),
+        Offset(tipScreen.x, pivotY + 5f),
+        strokeWidth = 1.5f,
+    )
+    drawLine(
+        DimRadiusColour,
+        Offset(axisX, pivotY - 5f),
+        Offset(axisX, pivotY + 5f),
         strokeWidth = 1.5f,
     )
     drawPill(
         measurer,
         camera,
-        "R = ${fixed(workingRadius(pivot, tip), 2)} m",
-        (pivotScreen.x + tipScreen.x) / 2f,
-        pivotScreen.y - 12f,
+        "R = ${fixed(workingRadius(tip), 2)} m",
+        (axisX + tipScreen.x) / 2f,
+        pivotY - 12f,
         BoomColour,
         10.sp,
     )
@@ -1236,40 +1300,3 @@ private fun fmtTick(value: Double): String =
  * it on exactly the boundary values the operator's finger lands on.
  */
 private fun roundTo1(value: Double): Double = Math.rint(value * 10.0) / 10.0
-
-/**
- * The state as a saveable list.
- *
- * A hand-written `Saver` rather than `@Parcelize`: this is one small record, and an
- * extra plugin for ten doubles would be a build-time cost for a rotation.
- */
-private val CraneGraphStateSaver: Saver<CraneGraphState, Any> = listSaver(
-    save = {
-        listOf<Any>(
-            it.config,
-            it.boomLength,
-            it.jibLength,
-            it.extJibLength,
-            it.jibOffset,
-            it.angle,
-            it.envMin,
-            it.envMax,
-            it.craneX,
-            it.craneY,
-        )
-    },
-    restore = {
-        CraneGraphState(
-            config = it[0] as String,
-            boomLength = it[1] as Double,
-            jibLength = it[2] as Double,
-            extJibLength = it[3] as Double,
-            jibOffset = it[4] as Double,
-            angle = it[5] as Double,
-            envMin = it[6] as Double,
-            envMax = it[7] as Double,
-            craneX = it[8] as Double,
-            craneY = it[9] as Double,
-        )
-    },
-)

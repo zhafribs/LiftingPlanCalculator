@@ -1,5 +1,11 @@
 package com.zhafrisbs.liftingplancalculator.core
 
+import kotlin.math.acos
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
+
 /**
  * The Crane tab's inputs and its calculation.
  *
@@ -39,9 +45,9 @@ enum class ChartColumn(
     val max: Double,
 ) {
     RADIUS("radius", "Radius", "m", 2, 0.0, 200.0),
-    CAPACITY("capacity", "Rated Load", "kg", 0, 0.0, 1.0e7),
-    ANGLE("angle", "Boom Angle", "deg", 1, 0.0, 90.0),
-    BOOM("boom", "Boom Length", "m", 2, 0.0, 200.0),
+    CAPACITY("capacity", "Rated load", "kg", 0, 0.0, 1.0e7),
+    ANGLE("angle", "Boom angle", "deg", 1, 0.0, 90.0),
+    BOOM("boom", "Boom length", "m", 2, 0.0, 200.0),
 }
 
 /**
@@ -115,7 +121,54 @@ data class CraneInputs(
     val chartBoom: Double? = null,
     /** The radii charted at [chartBoom], ascending: what the radius dropdown offers. */
     val chartRadii: List<Double> = emptyList(),
+    /**
+     * The crane's `Crane location on axis (X, Y)` position, when the workbook
+     * records one.  Null for every other workbook, and null is what keeps the
+     * Graph tab self-contained: the geometry derives its angle from the axis only
+     * once a position says where the axis is.
+     */
+    val chartPosition: Pair<Double, Double>? = null,
+    /** The jib tables the workbook offers, as `(length, offset)` pairs, in order. */
+    val chartJibs: List<JibOption> = emptyList(),
+    /**
+     * Which configuration the jib chart is checked at: `"boom"` for the main boom
+     * alone, `"boom_jib"` or `"boom_ext_jib"` for one of the jib tables.  The
+     * plain `"boom"` sits here rather than an empty string because it is also what
+     * a hand-typed chart means, and [jibActive] reads it as the one question worth
+     * asking of it.
+     */
+    val jibConfig: String = "boom",
+    /** The selected jib column's length and offset angle, or null on the main boom. */
+    val jibLength: Double? = null,
+    val jibOffset: Double? = null,
+    /** The selected jib column's chart, as `(boom angle, capacity kg)` points. */
+    val chartJibPoints: List<Pair<Double, Double>> = emptyList(),
+    /**
+     * The boom angle the Graph tab publishes, in degrees from horizontal, or null
+     * when nothing has published one.  Held here rather than derived so a jib chart
+     * can be looked up at the angle the operator last settled on.
+     */
+    val boomAngleDeg: Double? = null,
 ) {
+    /**
+     * Whether a jib configuration is selected, rather than the main boom alone.
+     *
+     * **Invariant:** `jibConfig != "boom"` implies `chartSource == "excel"`.  The only
+     * writer of a non-`boom` configuration is `ExcelImport.jibChanged`, which is
+     * reachable only through `chooseJib`, and that returns early unless a workbook
+     * chart is loaded.  Four user-visible sites rest on this: the jib card's radios and
+     * readouts, the jib capacity row, the capacity plot's suppression while a jib is
+     * fitted, and the assembly radius the report prints in place of the working radius.
+     * A non-`boom` configuration over a hand-typed chart would break the last of those
+     * in particular, publishing an assembly radius no chart stands behind.
+     *
+     * Deliberately not written as a conjunct (`jibConfig == "boom" || chartSource ==
+     * "excel"`): the disallowed state is unreachable, and the reference's own predicate
+     * is equally bare.
+     */
+    val jibActive: Boolean
+        get() = jibConfig == "boom_jib" || jibConfig == "boom_ext_jib"
+
     /** The manual entry's `(radius, capacity)` points, in row order. */
     fun chartPairs(): List<Pair<Double, Double>> = rows.mapNotNull { it.pair() }
 
@@ -237,6 +290,39 @@ object Crane {
             manualCapacity != null
         if (useManual) chartCapacity = manualCapacity
 
+        // The boom angle: the Graph tab's published figure when there is one, else
+        // the angle the assembly geometry implies for the working radius (so a jib
+        // chart can be checked before the graph is opened), else the manual row's
+        // own angle -- the original behaviour.
+        //
+        // The gate on [CraneInputs.chartPosition] is load-bearing, not a formality:
+        // a workbook with no crane position has no axis to derive an angle from, so
+        // without it a position-less workbook would start reporting a boom angle it
+        // reports none for today.
+        val publishedAngle = inputs.boomAngleDeg?.takeIf { it > 0.0 }
+        val impliedAngle =
+            if (inputs.chartPosition != null) impliedBoomAngle(inputs, effectiveRadius) else null
+        val boomAngle = publishedAngle
+            ?: impliedAngle
+            ?: manualAngle(effectiveRadius, inputs.rows)
+
+        // A jib configuration is checked against the workbook's jib table at the
+        // boom angle, and that table replaces the main-boom chart entirely: a
+        // radius lookup would read a column that no longer applies once a jib is
+        // fitted.  With no angle yet there is nothing honest to publish, so this
+        // branch publishes null rather than the boom chart's figure.
+        if (inputs.jibActive && inputs.chartSource == "excel" &&
+            inputs.chartJibPoints.isNotEmpty()
+        ) {
+            chartCapacity = boomAngle?.let { angle ->
+                try {
+                    Calc.lookupChartCapacity(inputs.chartJibPoints, angle)
+                } catch (exc: CalcException) {
+                    throw CraneInputException(exc.message ?: "The load chart could not be read.")
+                }
+            }
+        }
+
         val usage = if (chartCapacity != null && gross > 0) {
             Calc.chartUsagePercent(gross, chartCapacity)
         } else {
@@ -262,7 +348,15 @@ object Crane {
             craneName = inputs.name,
             craneCapacityT = inputs.capacityT,
             craneCapacityKg = capacityKg,
-            radiusM = effectiveRadius,
+            // A jib chart is read at the boom angle, so the working radius is the
+            // assembly's reach at that angle, measured from the x = 0 axis.  Only a
+            // jib configuration derives it this way; with no jib the working radius
+            // is still whatever the operator entered.
+            radiusM = if (inputs.jibActive) {
+                boomAngle?.let { assemblyRadius(inputs, it) } ?: effectiveRadius
+            } else {
+                effectiveRadius
+            },
             // True whenever *either* chart holds a point, so "loaded" keeps meaning
             // "there is something to look up" rather than "from Excel".
             chartLoaded = manualPairs.isNotEmpty() || inputs.chartPoints.isNotEmpty(),
@@ -305,9 +399,71 @@ object Crane {
             } else {
                 inputs.chartBoom
             },
-            boomAngleDeg = manualAngle(effectiveRadius, inputs.rows),
+            boomAngleDeg = boomAngle,
             chartRows = if (useManual) manualPairs.size else inputs.chartPoints.size,
         )
+    }
+
+    /**
+     * The boom angle that places the hook at the chart's [radius], from the assembly
+     * geometry.  This is the same figure the Graph tab draws, solved from the crane
+     * tab's own inputs.
+     *
+     * Two conventions the workbook fixes:
+     *
+     *  * the radius is measured from the **x = 0 axis**, not from the crane, so the
+     *    horizontal reach from the crane is the radius less its own X;
+     *  * the jib offset is **clockwise** from the boom axis (a positive offset lowers
+     *    the jib), so the offset vector's vertical part is negative.
+     *
+     * The upper solution is taken -- the hook above the pivot -- and the result is
+     * clamped into `[0, 90]` because a lift below the horizon or past vertical is
+     * not something the chart can express.  Null when there is no boom, no radius,
+     * no boom length, or the radius sits behind the crane.
+     */
+    fun impliedBoomAngle(inputs: CraneInputs, radius: Double): Double? {
+        if (radius <= 0.0) return null
+        val boom = inputs.chartBoom ?: return null
+        if (boom <= 0.0) return null
+        val craneX = inputs.chartPosition?.first ?: 0.0
+        val reach = radius - craneX
+        if (reach <= 0.0) return null
+        val (jib, offset) = if (inputs.jibActive) {
+            (inputs.jibLength ?: 0.0) to (inputs.jibOffset ?: 0.0)
+        } else {
+            0.0 to 0.0
+        }
+        val offsetRad = Math.toRadians(offset)
+        val vx = boom + jib * cos(offsetRad)
+        val vy = -jib * sin(offsetRad)
+        val envelope = hypot(vx, vy)
+        if (envelope <= 0.0) return null
+        val ratio = (reach / envelope).coerceIn(0.0, 1.0)
+        val base = Math.toDegrees(atan2(vy, vx))
+        return (Math.toDegrees(acos(ratio)) - base).coerceIn(0.0, 90.0)
+    }
+
+    /**
+     * The working radius the assembly reaches at [angle], measured from the x = 0
+     * axis.  The forward partner of [impliedBoomAngle], used by the jib charts:
+     * their input is the boom angle, so the radius follows from it.
+     *
+     * The crane's own X is added back in, so the figure is measured from the same
+     * axis the chart's radii are.  Null only when there is no usable boom length.
+     */
+    fun assemblyRadius(inputs: CraneInputs, angle: Double): Double? {
+        val boom = inputs.chartBoom ?: return null
+        if (boom <= 0.0) return null
+        val (jib, offset) = if (inputs.jibActive) {
+            (inputs.jibLength ?: 0.0) to (inputs.jibOffset ?: 0.0)
+        } else {
+            0.0 to 0.0
+        }
+        val a = Math.toRadians(angle)
+        val o = Math.toRadians(offset)
+        val reach = boom * cos(a) + jib * cos(a - o)
+        val craneX = inputs.chartPosition?.first ?: 0.0
+        return craneX + reach
     }
 
     /**

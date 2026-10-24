@@ -42,7 +42,7 @@ data class ChartDataRow(
  * kept for the log rather than the screen: the label shows the file and the unit,
  * and adding a sheet name to it would make the two readers' labels differ.
  */
-class LoadChartData(
+data class LoadChartData(
     val rows: List<ChartDataRow>,
     val headerRow: Int,
     val columnMap: Map<String, Int>,
@@ -50,6 +50,15 @@ class LoadChartData(
     val matrix: Boolean = false,
     val booms: List<Double> = emptyList(),
     val unit: String = "kg",
+    /**
+     * The `Crane location on axis (X, Y)` cell the new workbook format records,
+     * when the workbook has one.  A crane's floor position rather than anything
+     * on the main chart, so it is found on its own pass and may live on another
+     * sheet.
+     */
+    val position: Pair<Double, Double>? = null,
+    /** The jib sheet's tables, when the workbook has one; empty otherwise. */
+    val jibColumns: List<JibColumn> = emptyList(),
 ) {
     /**
      * Rated capacity (kg) at a working radius, from the load column — or, for a
@@ -121,39 +130,63 @@ object ExcelLoader {
      * The first sheet that yields a chart wins, which is the reference's behaviour
      * via `wb.worksheets`.  A sheet with nothing on it is skipped rather than
      * ending the search.
+     *
+     * The new workbook format adds a crane position and a second, jib sheet on
+     * top of that main chart.  Both are extras: a workbook without them parses
+     * exactly as it always did.  Their scan is a **separate pass** across every
+     * sheet — a position can sit on one sheet and the jib tables on another — so
+     * it deliberately does not stop at the sheet that won the chart.
      */
     @Throws(CalcException::class)
     fun loadChart(sheets: List<XlsxSheet>, columnMap: Map<String, Int>? = null): LoadChartData {
-        for (sheet in sheets) {
-            // The reference strips each string cell and turns an empty one into
-            // None while it reads, then drops rows that are entirely empty.  Both
-            // happen here, on the same values, because the detection below depends
-            // on them.
-            val rows = sheet.rows
+        // The reference strips each string cell and turns an empty one into
+        // None while it reads, then drops rows that are entirely empty.  Both
+        // happen here, on the same values, because the detection below depends
+        // on them — and the extras scan below depends on them too, so the cleaning
+        // is done once, up front, for every sheet.
+        val cleaned = sheets.map { sheet ->
+            sheet.rows
                 .map { row -> row.map { cell -> if (cell is String) cell.trim().ifEmpty { null } else cell } }
                 .filter { row -> row.any { it != null } }
+        }
+
+        var chart: LoadChartData? = null
+        for ((index, sheet) in sheets.withIndex()) {
+            val rows = cleaned[index]
             if (rows.isEmpty()) continue
 
             if (columnMap != null) {
-                parseColumnRows(rows, 0, columnMap, sheet.title)?.let { return it }
+                chart = parseColumnRows(rows, 0, columnMap, sheet.title)
+                if (chart != null) break
                 continue
             }
 
             val (headerIndex, mapping) = detectHeaderRow(rows)
             if (mapping["radius"] != null && mapping["load"] != null) {
-                parseColumnRows(rows, headerIndex ?: 0, mapping, sheet.title)?.let { return it }
+                chart = parseColumnRows(rows, headerIndex ?: 0, mapping, sheet.title)
+                if (chart != null) break
             }
 
             val (matrixRow, booms) = detectMatrix(rows)
             if (matrixRow != null) {
-                parseMatrixRows(rows, matrixRow, booms, sheet.title)?.let { return it }
+                chart = parseMatrixRows(rows, matrixRow, booms, sheet.title)
+                if (chart != null) break
             }
         }
-        throw CalcException(
-            "Could not find a load chart in this workbook. Make sure it has " +
-                "either a header row with radius and load columns, or a boom " +
-                "length row across the top with radii in the first column."
-        )
+        if (chart == null) {
+            throw CalcException(
+                "Could not find a load chart in this workbook. Make sure it has " +
+                    "either a header row with radius and load columns, or a boom " +
+                    "length row across the top with radii in the first column."
+            )
+        }
+
+        // The first sheet that yields a position wins, and the first that yields
+        // jib tables wins — the reference's `find_map` over every sheet, which is
+        // why a workbook whose jib sheet is second is read at all.
+        val position = cleaned.firstNotNullOfOrNull { findPosition(it) }
+        val jibColumns = cleaned.firstNotNullOfOrNull { parseJibSheet(it) } ?: emptyList()
+        return chart.copy(position = position, jibColumns = jibColumns)
     }
 
     // -----------------------------------------------------------------------
@@ -209,6 +242,148 @@ object ExcelLoader {
         val largest = capacities.maxOrNull() ?: 0.0
         return if (largest <= 2000) "ton" to 1000.0 else "kg" to 1.0
     }
+
+    // -----------------------------------------------------------------------
+    // The jib sheet and the crane position — the new workbook format's extras
+    // -----------------------------------------------------------------------
+
+    /**
+     * The "Crane location on axis (X, Y)" value in a sheet, if it has one.
+     *
+     * The value sits on the label's right or directly below it, written either as
+     * one `x,y` text or as two numeric cells.  All four readings are tried, in the
+     * reference's own order: a chart puts the pair where it likes, and the first
+     * one that parses is the one meant.
+     */
+    fun findPosition(rows: List<List<Any?>>): Pair<Double, Double>? {
+        for (index in rows.indices) {
+            val row = rows[index]
+            for (column in row.indices) {
+                if (!normalise(row[column]).contains("cranelocation")) continue
+                pairFromCell(row.getOrNull(column + 1))?.let { return it }
+                val below = rows.getOrNull(index + 1) ?: continue
+                pairFromCell(below.getOrNull(column))?.let { return it }
+                pairFromCell(below.getOrNull(column + 1))?.let { return it }
+                val x = chartNumber(below.getOrNull(column))
+                val y = chartNumber(below.getOrNull(column + 1))
+                if (x != null && y != null) return x to y
+            }
+        }
+        return null
+    }
+
+    /**
+     * Parse a jib load chart sheet: `Boom angle (°)` down the first column,
+     * `Jib 7.2 m`-style headings over one column per offset angle.
+     *
+     * One [JibColumn] per (jib length, offset) pair, capacities in kg — scaled by
+     * the same ton-versus-kg detection the main chart uses, because the jib sheet
+     * writes its capacities the same way.
+     */
+    fun parseJibSheet(rows: List<List<Any?>>): List<JibColumn>? {
+        val header = (0 until minOf(rows.size, 40)).firstOrNull { index ->
+            val row = rows[index]
+            val norm = normalise(row.firstOrNull { it != null })
+            // The first cell must *be* the angle heading: the sheet's title text
+            // also mentions "boom angle" on many charts, and reading that title as
+            // the header would lose every jib column on the sheet.
+            norm.startsWith("boomangle") ||
+                (norm.startsWith("angle") && row.any { normalise(it).contains("jib") })
+        } ?: return null
+        val headerRow = rows[header]
+
+        // The group starts: heading cells that name a jib length.
+        val groups = mutableListOf<Pair<Double, Int>>()
+        headerRow.forEachIndexed { column, cell ->
+            if (normalise(cell).contains("jib")) {
+                val length = firstNumber(text(cell))
+                if (length != null && length > 0.0) groups.add(length to column)
+            }
+        }
+        if (groups.isEmpty()) return null
+
+        // The offsets row sits under the headings, one column per offset.  A group
+        // runs from its own column to the next group's, so a blank heading cell
+        // between two jib lengths still belongs to the length on its left.
+        val offsetsRow = rows.getOrNull(header + 1) ?: return null
+        val ends = groups.drop(1).map { it.second } + Int.MAX_VALUE
+        val sources = mutableListOf<Triple<Double, Double, Int>>()
+        groups.forEachIndexed { group, (length, start) ->
+            var column = start
+            while (column < minOf(ends[group], offsetsRow.size)) {
+                val offset = chartNumber(offsetsRow.getOrNull(column))
+                if (offset != null) sources.add(Triple(length, offset, column))
+                column++
+            }
+        }
+        if (sources.isEmpty()) return null
+
+        // The data rows: the first cell is the boom angle, the columns are
+        // capacities.
+        val points = sources.map { mutableListOf<Pair<Double, Double>>() }
+        val values = mutableListOf<Double>()
+        for (rowIndex in (header + 2) until rows.size) {
+            val row = rows[rowIndex]
+            val angle = chartNumber(row.firstOrNull()) ?: continue
+            sources.forEachIndexed { index, (_, _, column) ->
+                val capacity = chartNumber(row.getOrNull(column))
+                if (capacity != null && capacity > 0.0) {
+                    points[index].add(angle to capacity)
+                    values.add(capacity)
+                }
+            }
+        }
+        if (values.isEmpty()) return null
+
+        val (_, multiplier) = detectUnit(values)
+        // A column with a single point is not a table.
+        val columns = sources.mapIndexed { index, (length, offset, _) ->
+            JibColumn(
+                length = length,
+                offset = offset,
+                points = points[index]
+                    .map { (angle, capacity) -> angle to capacity * multiplier }
+                    .sortedBy { it.first },
+            )
+        }.filter { it.points.size >= 2 }
+        if (columns.isEmpty()) return null
+        return columns
+    }
+
+    /**
+     * The first number written in a string — `"Jib 7.2 m"` gives 7.2, `"5°"`
+     * gives 5.  Text without a number gives null.
+     */
+    fun firstNumber(text: String): Double? {
+        val current = StringBuilder()
+        for (ch in text) {
+            if (ch in '0'..'9' || ch == '.' || (ch == '-' && current.isEmpty())) {
+                current.append(ch)
+            } else if (current.isNotEmpty()) {
+                current.toString().trimEnd('.').toDoubleOrNull()?.let { return it }
+                current.clear()
+            }
+        }
+        if (current.isEmpty()) return null
+        return current.toString().trimEnd('.').toDoubleOrNull()
+    }
+
+    /** `"1.7,2.8"` / `"1.7 2.8"` / `"1.7;2.8"` as a pair. */
+    fun pairFromText(text: String): Pair<Double, Double>? {
+        val cleaned = text.replace(';', ',').replace(' ', ',')
+        val parts = cleaned.split(',').filter { it.trim().isNotEmpty() }
+        val x = parts.getOrNull(0)?.trim()?.toDoubleOrNull() ?: return null
+        val y = parts.getOrNull(1)?.trim()?.toDoubleOrNull() ?: return null
+        return x to y
+    }
+
+    /** The pair in a cell, but only where the cell is text — a lone number is one coordinate. */
+    private fun pairFromCell(cell: Any?): Pair<Double, Double>? =
+        (cell as? String)?.let { pairFromText(it) }
+
+    /** A cell as a chart number: a numeric cell, else the first number in its text. */
+    private fun chartNumber(cell: Any?): Double? =
+        toDoubleOrNull(cell) ?: (cell as? String)?.let { firstNumber(it) }
 
     // -----------------------------------------------------------------------
     // Parsing
