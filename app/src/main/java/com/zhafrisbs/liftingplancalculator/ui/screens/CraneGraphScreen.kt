@@ -163,8 +163,8 @@ internal fun CraneGraphScreen(viewModel: LiftViewModel, modifier: Modifier = Mod
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(
-            text = "Drag the boom tip to set the boom angle, and the crane marker to " +
-                "move it on the XY axis. The view stays fitted to the working range.",
+            text = "Drag the boom tip to set the angle; drag the crane marker to set (X, Y); " +
+                "the wheel zooms; double-click fits the view.",
             color = TextMuted,
             style = MaterialTheme.typography.bodySmall,
         )

@@ -199,7 +199,7 @@ fun CraneScreen(
                 onClick = { picker.launch(arrayOf("*/*")) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Open Excel Load Chart\u2026")
+                Text("Open Excel load chart...")
             }
 
             if (importError != null) {
@@ -216,7 +216,7 @@ fun CraneScreen(
         // entry is one charted point rather than a table.
         SectionCard(
             title = "Load chart \u2014 manual entry",
-            note = "Typing here switches the chart back to this line.",
+            note = "Typing here switches the chart back to this line",
         ) {
             val row = inputs.rows.firstOrNull() ?: ChartRow()
             // With a jib, the boom column is the **assembly** the capacity below is read
@@ -797,7 +797,7 @@ private fun toneFor(band: UsageState?): ResultTone = when (band) {
 private fun CapacityCheckFailure(message: String?) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Capacity Check",
+            text = "Capacity check",
             color = TextPrimary,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
