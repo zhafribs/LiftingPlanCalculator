@@ -28,7 +28,7 @@ Five input classes the spec implies but no single task's tests fully cover. Each
 2. A workbook with a **position but no jib tables**, or jib tables but no position — the two are found independently and neither's absence breaks the other. *(Task 2)*
 3. A lift **no jib chart can carry**, or `gross = 0` — no suggested angle, and the Crane tab publishes **no** capacity rather than the main boom's. *(Task 4)*
 4. The crane **off the `x = 0` axis** (`crane_x = −1.7`) — the working radius is measured from the axis, so engine and diagram agree. *(Tasks 1, 4)*
-5. **Rotating the device after dragging** the diagram — the deviation survives and "Reset to Crane Tab" is still offered. *(Task 5)*
+5. **Rotating the device after dragging** the diagram — the deviation survives and "Reset to Crane Tab" is still offered. *(Task 5)* **This holds for a main-boom drag, but not for a jib drag.** A jib drag sets `boomAngleDeg` via `publishAngle`; `boomAngleDeg` is the reading key for a jib configuration, so on Activity recreation (`MainActivity` declares no `android:configChanges`, which re-runs `LaunchedEffect(Unit)`) `applyWorkbook` re-pulls the workbook's angle and clears `graphDeviated`, and the "Reset to Crane Tab" button goes. A main-boom drag leaves the reading key (`workingRadius`) untouched, so the deviation survives. The reference's own end state is the same: its `store.subscribe` re-runs `sync()` synchronously *inside* the drag, so the desktop clears `deviated` for a jib drag **immediately** — the Kotlin is merely more generous, keeping it until the next workbook pull. Documentation correction only; no code change.
 
 ---
 
@@ -428,6 +428,31 @@ The diagram adopts the workbook's crane position, boom length, configuration and
 angle, offers Reset to Crane Tab once the operator drags away, and publishes the
 dragged angle back so the two tabs agree — the desktop's own arrangement."
 ```
+
+---
+
+### Task 8: Label parity on the two tabs
+
+**Files:**
+- Modify: `app/src/main/java/com/zhafrisbs/liftingplancalculator/ui/screens/CraneScreen.kt`
+- Modify: `app/src/main/java/com/zhafrisbs/liftingplancalculator/ui/screens/CraneGraphScreen.kt`
+
+**Interfaces:** produces nothing.
+
+Added mid-flight by a review finding. Task 6's reviewer spot-checked every user-visible string against the desktop and found three on the Crane tab that diverge from the reference's own wording. All three predate this work, which is exactly why they had no task: the design's goals talk about behaviour and never said "and the words must match too". Parity is the point of the whole change, and a reviewer reading the screen beside the desktop sees a different label.
+
+| Now | Desktop |`crane.js` |
+|---|---|---|
+| `Overall weight` | `Gross load at hook` | 487 |
+| `Boom Length` / `Working Radius` | `Boom length` / `Working radius` | 80-84 |
+| `Load Chart (Manual Entry)` | `Load chart — manual entry` | 132 |
+
+The second row is the one a person notices: the phone title-cases where the desktop sentence-cases.
+
+- [ ] **Step 1: Change those three strings to the desktop's wording, character for character** — including the em dash in the third, and the lower-case `l` and `r` in the second.
+- [ ] **Step 2: Sweep both screens for any other user-visible string that differs from its `crane.js` or `graph.js` counterpart**, and list what you checked in the report. Fix what diverges, or say why it does not. Do not change wording the desktop does not have a counterpart for — an APK-only label has nothing to be parity with.
+- [ ] **Step 3: Verify** — `./gradlew :app:assembleDebug` and `./gradlew :app:testDebugUnitTest`.
+- [ ] **Step 4: Commit.**
 
 ---
 
