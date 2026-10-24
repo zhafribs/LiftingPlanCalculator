@@ -159,6 +159,19 @@ class LiftViewModel : ViewModel() {
         private set
 
     /**
+     * The solve's own failure message, or null when [craneResult] solved.
+     *
+     * Kept beside the result rather than folded into it because the Crane tab's
+     * desktop `render` shows a failed check as a "Could not check" badge carrying this
+     * message, *in place of* the check's rows: a card that simply empties is
+     * indistinguishable from a chart that holds nothing.  The reference keeps the same
+     * pair -- `section.ok` with `section.error` -- and the two are written together in
+     * [solveCrane], so a reader can never see one without the other.
+     */
+    var craneError by mutableStateOf<String?>(null)
+        private set
+
+    /**
      * Solve the crane, and mirror the answer into the manual entry.
      *
      * **Call this after every write to [craneInputs], [loadItems] or [tackleItems].**
@@ -169,8 +182,16 @@ class LiftViewModel : ViewModel() {
      */
     private fun solveCrane() {
         val gross = LiftTotals.of(loadItems, tackleItems).gross
-        val result = runCatching { Crane.solve(craneInputs, gross) }.getOrNull()
+        val outcome = runCatching { Crane.solve(craneInputs, gross) }
+        val result = outcome.getOrNull()
         craneResult = result
+        // The failure travels with the absence, as it does for the nonuniform and tandem
+        // tabs: "there is no check" and "the chart could not be read" are different
+        // things to tell an operator, and only the second one is actionable.  Kept even
+        // when [result] is null for a reason with no message of its own -- the screen
+        // keys on the result, so a blank message shows the state alone rather than an
+        // empty line under it.
+        craneError = outcome.exceptionOrNull()?.message
         result?.let(::mirrorSolvedRow)
     }
 

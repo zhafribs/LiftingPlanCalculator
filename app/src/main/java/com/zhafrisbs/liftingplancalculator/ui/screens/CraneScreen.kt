@@ -149,10 +149,16 @@ fun CraneScreen(
     // refreshed.  The ViewModel re-solves on every write to the crane, the load or the
     // tackle, so nothing on this screen can read an answer older than its inputs.
     //
-    // An unsolvable input now shows as a blank card rather than as a line of text: the
-    // engine's own message lives in the ViewModel's solve, and a message invented here
-    // would be a second opinion about a failure the first one already described.
+    // **A failed solve is shown, and shown the desktop's way.**  When the engine refuses
+    // the inputs -- a chart it cannot read, a negative lift weight -- this screen puts a
+    // "Could not check" badge carrying the engine's own message where the check's rows
+    // go, which is what the reference's `render` does with `section.error`.  The card of
+    // em dashes it used to leave behind was indistinguishable from a chart that holds
+    // nothing, and the one thing a failure must not be is silent.  The message is the
+    // ViewModel's (`craneError`) for the same reason the result is: a message composed
+    // here would be a second opinion about a failure the engine already described.
     val result = viewModel.craneResult
+    val craneError = viewModel.craneError
 
     Column(
         modifier = modifier
@@ -237,20 +243,27 @@ fun CraneScreen(
         // **Changing either one writes through to the entry.**  The entry is this
         // selection written down, so a pick that did not reach it would leave the two
         // load-chart views disagreeing about the same lift.
-        // **And it goes away entirely while a jib is fitted.**
         //
-        // Not only the radius picker: the whole card.  With a jib the radius is not the
-        // operator's to choose -- it follows from the boom angle the jib chart is read
-        // at -- so the picker has nothing left to drive.  The boom selector could have
-        // stayed, and the desktop does keep it, but on this screen choosing a boom
-        // resets the configuration to the main boom: `ExcelImport.applied` opens on the
-        // main boom alone, because the jib tables have to be looked up again at the new
-        // boom.  A dropdown that silently discards the jib the card below has just
-        // selected is a control whose effect lands nowhere near where it is touched, so
-        // it goes with the radius while a jib is in charge.
+        // **With a jib fitted, only the radius picker goes.**
+        //
+        // The radius is not the operator's to choose while a jib is in charge -- it
+        // follows from the boom angle the jib sheet is read at -- so that picker has
+        // nothing left to drive.
+        //
+        // The boom picker stays, and that is the desktop's own rule: its `sync` hides
+        // `radiusWrap` on `jibActive` and hides `boomWrap` only when the chart has one
+        // boom or fewer, so a boom is still selectable with a jib fitted.  Choosing one
+        // does reset the configuration to the main boom -- `ExcelImport.applied` opens
+        // on the main boom alone, because the jib tables have to be looked up again at
+        // the new boom -- and the operator sees that as the jib card above resetting.
+        // Hiding the picker instead, as this screen used to, made its possible outcomes
+        // fewer than the desktop's, and the two are meant to agree.
+        //
+        // The card itself goes when neither picker has anything to draw: a hand-typed
+        // chart, or a one-boom chart with a jib fitted.
         if (inputs.chartSource == "excel" &&
-            !inputs.jibActive &&
-            (inputs.chartBooms.size > 1 || inputs.chartRadii.isNotEmpty())
+            (inputs.chartBooms.size > 1 ||
+                (!inputs.jibActive && inputs.chartRadii.isNotEmpty()))
         ) {
             SectionCard(title = "Working Radius & Boom Length") {
                 // The boom comes first because the radii below it are *that*
@@ -266,7 +279,7 @@ fun CraneScreen(
                         onSelected = { viewModel.selectCraneBoom(it, totals.gross) },
                     )
                 }
-                if (inputs.chartRadii.isNotEmpty()) {
+                if (!inputs.jibActive && inputs.chartRadii.isNotEmpty()) {
                     DropdownField(
                         label = "Working Radius",
                         options = inputs.chartRadii,
@@ -415,106 +428,108 @@ fun CraneScreen(
             }
         }
 
-        ResultCard(
-            title = "Capacity Check",
-            rows = listOfNotNull(
-                ResultRowData(
-                    "Crane",
-                    result?.craneName?.ifEmpty { null } ?: Figures.NOTHING,
-                ),
-                ResultRowData(
-                    "Crane rated capacity",
-                    Figures.fmt(result?.craneCapacityKg?.takeIf { it > 0 }, 2, "kg"),
-                ),
-                ResultRowData(
-                    "Boom length",
-                    Figures.fmt(result?.boomM, 2, "m"),
-                ),
-                // The manual entry's own angle, carried straight through to here.
-                //
-                // It was already **computed** -- `Crane.solve` reads it off the row
-                // the moment a radius and a capacity are typed -- but the card did
-                // not show it, so the one field the operator had just filled in was
-                // the one they could not see the effect of.  A blank here is "not
-                // entered" rather than "0 degrees": a load chart does not chart an
-                // angle, and a workbook import therefore leaves this empty.
-                ResultRowData(
-                    "Boom angle",
-                    Figures.fmt(result?.boomAngleDeg, 2, "\u00b0"),
-                ),
-                // **The jib, as the two figures that pick it.**
-                //
-                // A fitted jib is visible nowhere else on this card: the capacity below
-                // it comes from a different table, read against an angle rather than a
-                // radius, and whoever checks that figure has to know which jib it was
-                // checked with.  Shown only while one is fitted -- a "Jib" row on a
-                // main-boom check would name a jib that is not there.  The offset is the
-                // desktop's own whole-degree form, so 25 degrees reads `25` and not
-                // `25.0`.
-                if (inputs.jibActive) {
+        if (result == null) {
+            CapacityCheckFailure(craneError)
+        } else {
+            ResultCard(
+                title = "Capacity Check",
+                rows = listOfNotNull(
                     ResultRowData(
-                        "Jib",
-                        "${Figures.fmt(inputs.jibLength ?: 0.0, 2, "m")} at " +
-                            "${Figures.fmt(inputs.jibOffset ?: 0.0, 0, "\u00b0")} offset",
-                    )
-                } else {
-                    null
-                },
-                // The radius the lookup actually happened at.
-                //
-                // It was **used** all along -- every capacity in this card is read
-                // at it -- but it had no row of its own, so the manual entry's radius
-                // was the one column of the four with nowhere to arrive.  The other
-                // three each have a row here, which is what made the card look
-                // complete while this one was missing.
-                //
-                // It is `radiusM` rather than `workingRadius`, and they differ: with
-                // no working radius typed the solve falls back to the entry's own
-                // charted radius, and this is the figure the capacity beside it was
-                // looked up at -- the one worth showing.
-                ResultRowData(
-                    "Working radius",
-                    Figures.fmt(result?.radiusM?.takeIf { it > 0 }, 2, "m"),
-                ),
-                // **The capacity's own name follows the table it came from.**  With a jib
-                // the figure is the jib chart's, looked up against a boom angle; calling
-                // that "capacity at radius" would name the main boom's lookup for a
-                // number the main boom never supplied.
-                ResultRowData(
+                        "Crane",
+                        result.craneName.ifEmpty { null } ?: Figures.NOTHING,
+                    ),
+                    ResultRowData(
+                        "Crane rated capacity",
+                        Figures.fmt(result.craneCapacityKg.takeIf { it > 0 }, 2, "kg"),
+                    ),
+                    ResultRowData(
+                        "Boom length",
+                        Figures.fmt(result.boomM, 2, "m"),
+                    ),
+                    // The manual entry's own angle, carried straight through to here.
+                    //
+                    // It was already **computed** -- `Crane.solve` reads it off the row
+                    // the moment a radius and a capacity are typed -- but the card did
+                    // not show it, so the one field the operator had just filled in was
+                    // the one they could not see the effect of.  A blank here is "not
+                    // entered" rather than "0 degrees": a load chart does not chart an
+                    // angle, and a workbook import therefore leaves this empty.
+                    ResultRowData(
+                        "Boom angle",
+                        Figures.fmt(result.boomAngleDeg, 2, "\u00b0"),
+                    ),
+                    // **The jib, as the two figures that pick it.**
+                    //
+                    // A fitted jib is visible nowhere else on this card: the capacity below
+                    // it comes from a different table, read against an angle rather than a
+                    // radius, and whoever checks that figure has to know which jib it was
+                    // checked with.  Shown only while one is fitted -- a "Jib" row on a
+                    // main-boom check would name a jib that is not there.  The offset is the
+                    // desktop's own whole-degree form, so 25 degrees reads `25` and not
+                    // `25.0`.
                     if (inputs.jibActive) {
-                        "Jib capacity at boom angle"
+                        ResultRowData(
+                            "Jib",
+                            "${Figures.fmt(inputs.jibLength ?: 0.0, 2, "m")} at " +
+                                "${Figures.fmt(inputs.jibOffset ?: 0.0, 0, "\u00b0")} offset",
+                        )
                     } else {
-                        "Chart capacity at radius"
+                        null
                     },
-                    Figures.fmt(result?.chartCapacityKg, 2, "kg"),
+                    // The radius the lookup actually happened at.
+                    //
+                    // It was **used** all along -- every capacity in this card is read
+                    // at it -- but it had no row of its own, so the manual entry's radius
+                    // was the one column of the four with nowhere to arrive.  The other
+                    // three each have a row here, which is what made the card look
+                    // complete while this one was missing.
+                    //
+                    // It is `radiusM` rather than `workingRadius`, and they differ: with
+                    // no working radius typed the solve falls back to the entry's own
+                    // charted radius, and this is the figure the capacity beside it was
+                    // looked up at -- the one worth showing.
+                    ResultRowData(
+                        "Working radius",
+                        Figures.fmt(result.radiusM.takeIf { it > 0 }, 2, "m"),
+                    ),
+                    // **The capacity's own name follows the table it came from.**  With a jib
+                    // the figure is the jib chart's, looked up against a boom angle; calling
+                    // that "capacity at radius" would name the main boom's lookup for a
+                    // number the main boom never supplied.
+                    ResultRowData(
+                        if (inputs.jibActive) {
+                            "Jib capacity at boom angle"
+                        } else {
+                            "Chart capacity at radius"
+                        },
+                        Figures.fmt(result.chartCapacityKg, 2, "kg"),
+                    ),
+                    // The figure the capacity above is measured *against*.
+                    //
+                    // It sat on this tab already, in the line at the very top, but that
+                    // line is about where the number came from.  Here it is about the
+                    // comparison: a capacity and a usage percentage with no stated load
+                    // between them leave a reviewer to find the weight somewhere else and
+                    // hold it in their head.  It is the load plus the tackle -- the gross
+                    // at the hook, which is what the chart is read against -- and not the
+                    // sling load, which is a different figure and lives on the Uniform
+                    // tab.
+                    ResultRowData(
+                        "Overall weight",
+                        Figures.fmt(totals.gross.takeIf { it > 0 }, 2, "kg"),
+                    ),
+                    ResultRowData(
+                        "Capacity usage",
+                        Figures.fmt(result.capacityUsagePercent, 2, "%"),
+                        toneFor(result.capacityBand),
+                    ),
+                    ResultRowData(
+                        "Chart source",
+                        result.capacitySource.ifEmpty { null } ?: Figures.NOTHING,
+                    ),
                 ),
-                // The figure the capacity above is measured *against*.
-                //
-                // It sat on this tab already, in the line at the very top, but that
-                // line is about where the number came from.  Here it is about the
-                // comparison: a capacity and a usage percentage with no stated load
-                // between them leave a reviewer to find the weight somewhere else and
-                // hold it in their head.  It is the load plus the tackle -- the gross
-                // at the hook, which is what the chart is read against -- and not the
-                // sling load, which is a different figure and lives on the Uniform
-                // tab.
-                ResultRowData(
-                    "Overall weight",
-                    Figures.fmt(totals.gross.takeIf { it > 0 }, 2, "kg"),
-                ),
-                ResultRowData(
-                    "Capacity usage",
-                    Figures.fmt(result?.capacityUsagePercent, 2, "%"),
-                    toneFor(result?.capacityBand),
-                ),
-                ResultRowData(
-                    "Chart source",
-                    result?.capacitySource?.ifEmpty { null } ?: Figures.NOTHING,
-                ),
-            ),
-        )
+            )
 
-        if (result != null) {
             Text(
                 text = result.capacityStatus,
                 color = when (result.capacityBand) {
@@ -760,6 +775,60 @@ private fun toneFor(band: UsageState?): ResultTone = when (band) {
     UsageState.CAUTION -> ResultTone.CAUTION
     UsageState.OVER -> ResultTone.OVER
     null -> ResultTone.NEUTRAL
+}
+
+/**
+ * The capacity check when the solve failed, as the desktop draws it.
+ *
+ * The reference's `render` replaces the whole card body with one badge --
+ * `statusBadge("over", "Could not check", section.error)` -- and clears the meter, the
+ * rows and the plot beside it.  That is why this is not a [ResultCard] with a failure
+ * row in it: the badge is not a label-and-value pair, and writing the message into a
+ * value column would put the state in the muted column and the explanation in bold,
+ * which is the reverse of what the failure is saying.
+ *
+ * The frame around the badge repeats [ResultCard]'s because a card whose body is a
+ * single badge has no rows to hand that widget.  The wording is the desktop's: the state
+ * is its `"Could not check"`, and [message] is the engine's own, shown only when there
+ * is one -- the reference draws its `sub` line only for a truthy `section.error`, so an
+ * empty message shows the state alone rather than an empty line under it.
+ */
+@Composable
+private fun CapacityCheckFailure(message: String?) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Capacity Check",
+            color = TextPrimary,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = PanelSurface,
+            border = BorderStroke(1.dp, BorderStrong),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "Could not check",
+                    color = StateOver,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (!message.isNullOrEmpty()) {
+                    Text(
+                        text = message,
+                        color = TextMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**
