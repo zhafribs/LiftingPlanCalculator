@@ -1,18 +1,22 @@
 package com.zhafrisbs.liftingplancalculator.core
 
-import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
- * The working-range geometry, ported from `crane_graph/geometry.py`.
+ * The working-range geometry, ported from the desktop's `ui/js/graph/geometry.js`.
  *
  * Pure arithmetic with no Android dependency, for the reason the reference keeps
- * it out of `gui.py`: the desktop's own module docstring says it is "pure Python
- * (no Qt) so it can be unit tested", and the whole of the diagram is decided here.
- * If a figure is wrong it is wrong *here*, and it can be checked here.
+ * it out of the UI: the whole of the diagram is decided here.  If a figure is wrong
+ * it is wrong *here*, and it can be checked here.
+ *
+ * The desktop deliberately diverged from the original `crane_graph/geometry.py`
+ * that both descend from: its jib offset **lowers** the jib (clockwise) and its
+ * working radius is measured from the `x = 0` axis rather than from the crane.
+ * This module follows the desktop, not the Python.
  *
  * **The unit convention is the desktop's and is not negotiable.**  Lengths are
  * metres, angles are degrees measured counter-clockwise from +X, Y points up, and
@@ -117,7 +121,8 @@ internal fun boomTip(pivot: GraphPoint, boomLength: Double, angleDeg: Double): G
  * World coordinates of the free end of the boom + jib assembly.
  *
  * With no jib this is the boom tip; otherwise it is the jib tip, the jib being
- * pinned at the boom tip at [jibOffsetDeg] relative to the boom axis.
+ * pinned at the boom tip and offset **clockwise** from the boom axis by
+ * [jibOffsetDeg], so a positive offset *lowers* the jib below the boom line.
  */
 internal fun assemblyTip(
     pivot: GraphPoint,
@@ -128,7 +133,7 @@ internal fun assemblyTip(
 ): GraphPoint {
     val tip = boomTip(pivot, boomLength, angleDeg)
     if (jibLength <= 0) return tip
-    val a = Math.toRadians(angleDeg + jibOffsetDeg)
+    val a = Math.toRadians(angleDeg - jibOffsetDeg)
     return GraphPoint(
         tip.x + jibLength * cos(a),
         tip.y + jibLength * sin(a),
@@ -142,6 +147,8 @@ internal fun assemblyTip(
  * by the boom angle.  Computing it once here is what makes the envelope arc a
  * circle: the distance from the pivot to the tip cannot change as the angle sweeps,
  * so the radius below and the tip above are two views of one number.
+ *
+ * The jib offset is clockwise, so its vertical component is **negative**.
  */
 internal fun tipOffsetFromPivot(
     boomLength: Double,
@@ -154,7 +161,7 @@ internal fun tipOffsetFromPivot(
     val a = Math.toRadians(jibOffsetDeg)
     return GraphPoint(
         boomLength + jibLength * cos(a),
-        jibLength * sin(a),
+        -jibLength * sin(a),
     )
 }
 
@@ -215,8 +222,38 @@ internal fun angleForTip(
     return normalizeAngle(targetAng - base)
 }
 
-/** Working radius (m) = the horizontal distance from the crane to the tip. */
-internal fun workingRadius(pivot: GraphPoint, tip: GraphPoint): Double = abs(tip.x - pivot.x)
+/**
+ * Working radius (m) = the tip's horizontal distance from the `x = 0` axis.
+ *
+ * The basis the load chart's radii are measured from, and **not** the crane's own
+ * position: a crane set off the axis reads the same tip differently.  This is the
+ * desktop's convention, which the original Python did not share.
+ */
+internal fun workingRadius(tip: GraphPoint): Double = tip.x
+
+/**
+ * The boom angle that gives the assembly a working radius of [radius].
+ *
+ * The inverse of the horizontal reach, and the upper solution -- the tip above the
+ * pivot.  With no jib this reduces to `acos(radius / boomLength)`.  Ported verbatim
+ * from the desktop's own function: its `ratio` is clamped to 1, so a radius at or
+ * beyond the envelope still answers rather than asking for the `acos` of a value
+ * greater than one.
+ */
+internal fun angleForWorkingRadius(
+    boomLength: Double,
+    jibLength: Double,
+    jibOffsetDeg: Double,
+    radius: Double,
+): Double {
+    val (vx, vy) = tipOffsetFromPivot(boomLength, jibLength, jibOffsetDeg)
+    val envelope = hypot(vx, vy)
+    if (envelope < 1e-9) throw GeometryException("Boom length must be greater than 0.")
+    if (radius < 0) throw GeometryException("Working radius cannot be negative.")
+    val base = Math.toDegrees(atan2(vy, vx))
+    val ratio = minOf(1.0, radius / envelope)
+    return normalizeAngle(Math.toDegrees(acos(ratio)) - base)
+}
 
 /** Tip height (m) above ground level (`y = 0`), negative below it. */
 internal fun tipHeight(tip: GraphPoint): Double = tip.y
@@ -268,7 +305,7 @@ internal fun readouts(state: CraneGraphState): CraneReadouts {
         pivot = pivot,
         boomEnd = boomEnd,
         tip = tip,
-        workingRadius = workingRadius(pivot, tip),
+        workingRadius = workingRadius(tip),
         tipHeight = tipHeight(tip),
         boomTipHeight = tipHeight(boomEnd),
         heightAboveCrane = tip.y - pivot.y,

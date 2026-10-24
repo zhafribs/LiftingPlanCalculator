@@ -915,7 +915,7 @@ private fun DrawScope.drawDimensions(camera: Camera, state: CraneGraphState, mea
     drawPill(
         measurer,
         camera,
-        "R = ${fixed(workingRadius(pivot, tip), 2)} m",
+        "R = ${fixed(workingRadius(tip), 2)} m",
         (pivotScreen.x + tipScreen.x) / 2f,
         pivotScreen.y - 12f,
         BoomColour,
