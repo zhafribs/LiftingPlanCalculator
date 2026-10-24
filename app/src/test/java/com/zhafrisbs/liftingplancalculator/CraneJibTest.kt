@@ -85,6 +85,33 @@ class CraneJibTest {
     }
 
     @Test
+    fun aJibWithoutACranePositionPublishesNoBoomAngle() {
+        // The `chartPosition != null` gate in `solve` exists for this case: the
+        // implied angle is derived from where the crane sits on the axis, so a
+        // workbook that records no position has no axis to derive one from.  The
+        // operator still typed a working radius, so without the gate this would
+        // report an angle -- and, because the jib chart is read at that angle, a
+        // capacity -- that nothing in the workbook supports.
+        val inputs = CraneInputs(
+            chartPoints = listOf(5.0 to 35000.0, 10.0 to 21000.0),
+            workingRadius = 20.0,
+            chartSource = "excel",
+            chartBooms = listOf(34.0),
+            chartBoom = 34.0,
+            // chartPosition deliberately left null: no axis to measure from.
+            jibConfig = "boom_ext_jib",
+            jibLength = 12.8,
+            jibOffset = 0.0,
+            chartJibPoints = listOf(45.0 to 400.0, 83.0 to 2000.0),
+        )
+        val result = Crane.solve(inputs, 1000.0)
+        assertNull(result.boomAngleDeg)
+        // With no angle there is no assembly reach to publish, so the radius stays
+        // the one the operator entered rather than a derived one.
+        assertEquals(20.0, result.radiusM, 1e-9)
+    }
+
+    @Test
     fun aJibAngleIsImpliedFromTheRadiusForTheLowerSolution() {
         // 34 m boom + 12.8 m jib at 0 deg offset: envelope 46.8 m.
         // Radius 23.4 m (crane on the axis) gives the boom at acos(0.5) = 60.
