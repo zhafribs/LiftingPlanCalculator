@@ -327,6 +327,122 @@ object ExcelImport {
     }
 
     // -----------------------------------------------------------------------
+    // The jib
+    // -----------------------------------------------------------------------
+
+    /**
+     * The jib tables a workbook offers, as `(length, offset)` pairs in order.
+     *
+     * Folded from the parsed [JibColumn]s down to the distinct pairs that pick one,
+     * because that pair — not the whole column with its chart — is what a selector
+     * lists and what [jibPoints] is later asked for.  A duplicate is dropped rather
+     * than counted: a jib sheet that writes the same heading twice is one table.
+     */
+    fun jibOptions(chart: LoadChartData): List<JibOption> {
+        val options = mutableListOf<JibOption>()
+        for (column in chart.jibColumns) {
+            val option = JibOption(column.length, column.offset)
+            if (!options.contains(option)) options.add(option)
+        }
+        return options
+    }
+
+    /**
+     * The selected jib column's `(boom angle, capacity kg)` points, or empty.
+     *
+     * Matched on **both** the length and the offset, because a length alone picks
+     * between tables that share it and differ by their offset angle.  A half-made
+     * selection — either figure null — is no selection at all and yields empty
+     * rather than a table nobody chose.
+     *
+     * A tolerance rather than an equality test, exactly as the loader's own
+     * `boomIndex` does: a length or offset is a number read out of a cell, and
+     * `25.0` written in a spreadsheet is not reliably `25.0` when it arrives here.
+     */
+    fun jibPoints(
+        chart: LoadChartData,
+        length: Double?,
+        offset: Double?,
+    ): List<Pair<Double, Double>> {
+        if (length == null || offset == null) return emptyList()
+        val column = chart.jibColumns.firstOrNull { candidate ->
+            kotlin.math.abs(candidate.length - length) < 1e-9 &&
+                kotlin.math.abs(candidate.offset - offset) < 1e-9
+        } ?: return emptyList()
+        return column.points
+    }
+
+    /**
+     * The boom angle an operator would settle on for this lift, or null.
+     *
+     * The jib's counterpart of [suggestRadius]: the lift needs `gross / 0.75` of
+     * rated capacity — that ratio read off [Calc], not typed again here, so the two
+     * suggestions cannot drift apart — and the angle picked is the **farthest
+     * reach** whose capacity still meets it.  A jib reaches further the *lower* the
+     * boom, so the farthest reach is the **smallest** charted angle that passes.
+     *
+     * A separate function from [suggestRadius] rather than one shared body, because
+     * a jib table is read against the boom's angle where the main chart is read
+     * against a radius: the same rule over a different axis.
+     *
+     * Returns null for the two cases the desktop also declines.  **No load yet**, so
+     * that choosing a jib before entering a lift does not pick an angle a later
+     * weight would invalidate.  And **nothing meets the requirement**, where
+     * snapping to a charted angle would hide the very shortfall the operator needs
+     * to see.
+     */
+    fun suggestJibAngle(points: List<Pair<Double, Double>>, gross: Double): Double? {
+        if (gross <= 0.0) return null
+        val required = Calc.requiredChartCapacity(gross)
+        return points.filter { it.second >= required }.map { it.first }.minOrNull()
+    }
+
+    /**
+     * The inputs after the operator changes the jib configuration or selection.
+     *
+     * The boom angle is re-suggested for the new table — the farthest reach that
+     * still meets the 75% rule — the same way the working radius is suggested for
+     * the main boom.  With no lift to check against it stays unset and the graph's
+     * geometry supplies it.
+     *
+     * A configuration that is neither `"boom_jib"` nor `"boom_ext_jib"` — an empty
+     * string included — becomes `"boom"`: the reference's own normalisation, kept
+     * rather than replaced by an assumption about what a caller passes.
+     */
+    fun jibChanged(
+        inputs: CraneInputs,
+        chart: LoadChartData,
+        config: String,
+        length: Double?,
+        offset: Double?,
+        gross: Double,
+    ): CraneInputs {
+        val normalised =
+            if (config == "boom_jib" || config == "boom_ext_jib") config else "boom"
+        val active = normalised != "boom"
+        val points = if (active) jibPoints(chart, length, offset) else emptyList()
+        val suggested = if (active) suggestJibAngle(points, gross) else null
+
+        // The manual entry's own angle is written from the suggestion, and 0.0 —
+        // *not entered* — when there is none.  An angle left over from the table
+        // that was in charge a moment ago would be a figure the operator never
+        // entered for the one now selected.
+        val rows = inputs.rows.toMutableList()
+        if (rows.isNotEmpty()) {
+            rows[0] = rows[0].copy(angle = suggested ?: 0.0)
+        }
+
+        return inputs.copy(
+            rows = rows,
+            jibConfig = normalised,
+            jibLength = if (active) length else null,
+            jibOffset = if (active) offset else null,
+            chartJibPoints = points,
+            boomAngleDeg = suggested,
+        )
+    }
+
+    // -----------------------------------------------------------------------
     // What an import does to the form
     // -----------------------------------------------------------------------
 
@@ -383,6 +499,17 @@ object ExcelImport {
             chartBoom = boom,
             chartRadii = chartRadii(chart, boom),
             workingRadius = radius,
+            // The chart's own extras, and a reset to the main boom: an import — and
+            // a boom change, which re-applies through here — opens on the main boom
+            // alone.  `chartJibs` is *published*, not cleared, so the tables the
+            // workbook offers stay selectable at every boom.
+            chartPosition = chart.position,
+            chartJibs = jibOptions(chart),
+            jibConfig = "boom",
+            jibLength = null,
+            jibOffset = null,
+            chartJibPoints = emptyList(),
+            boomAngleDeg = null,
         )
     }
 
@@ -401,7 +528,15 @@ object ExcelImport {
      */
     fun radiusChanged(inputs: CraneInputs, chart: LoadChartData, radius: Double): CraneInputs {
         val mirrored = mirroredPoint(chart, radius, inputs.chartBoom)
-        return inputs.copy(workingRadius = radius, rows = mirrorInto(inputs.rows, mirrored))
+        // `copy` carries the jib fields untouched: a radius change leaves the same
+        // jib configuration in place.  The published boom angle is cleared instead,
+        // because it belonged to the old radius and the geometry derives the new
+        // one — the reference's own reset in `radius_changed`.
+        return inputs.copy(
+            workingRadius = radius,
+            rows = mirrorInto(inputs.rows, mirrored),
+            boomAngleDeg = null,
+        )
     }
 
     /**
@@ -454,5 +589,18 @@ object ExcelImport {
         chartBooms = emptyList(),
         chartBoom = null,
         chartRadii = emptyList(),
+        // **Everything the workbook supplied goes**, the jib included — where an
+        // import or a boom change only resets the *selection* and leaves the jib
+        // tables on offer.  `jibConfig` returns to "boom" rather than to the
+        // reference's empty string, because "boom" is this port's spelling of the
+        // main boom and the two words differ only in how they read.  A null angle
+        // and position keep the Graph tab self-contained until a chart arrives.
+        chartPosition = null,
+        chartJibs = emptyList(),
+        jibConfig = "boom",
+        jibLength = null,
+        jibOffset = null,
+        chartJibPoints = emptyList(),
+        boomAngleDeg = null,
     )
 }

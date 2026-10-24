@@ -115,7 +115,39 @@ data class CraneInputs(
     val chartBoom: Double? = null,
     /** The radii charted at [chartBoom], ascending: what the radius dropdown offers. */
     val chartRadii: List<Double> = emptyList(),
+    /**
+     * The crane's `Crane location on axis (X, Y)` position, when the workbook
+     * records one.  Null for every other workbook, and null is what keeps the
+     * Graph tab self-contained: the geometry derives its angle from the axis only
+     * once a position says where the axis is.
+     */
+    val chartPosition: Pair<Double, Double>? = null,
+    /** The jib tables the workbook offers, as `(length, offset)` pairs, in order. */
+    val chartJibs: List<JibOption> = emptyList(),
+    /**
+     * Which configuration the jib chart is checked at: `"boom"` for the main boom
+     * alone, `"boom_jib"` or `"boom_ext_jib"` for one of the jib tables.  The
+     * plain `"boom"` sits here rather than an empty string because it is also what
+     * a hand-typed chart means, and [jibActive] reads it as the one question worth
+     * asking of it.
+     */
+    val jibConfig: String = "boom",
+    /** The selected jib column's length and offset angle, or null on the main boom. */
+    val jibLength: Double? = null,
+    val jibOffset: Double? = null,
+    /** The selected jib column's chart, as `(boom angle, capacity kg)` points. */
+    val chartJibPoints: List<Pair<Double, Double>> = emptyList(),
+    /**
+     * The boom angle the Graph tab publishes, in degrees from horizontal, or null
+     * when nothing has published one.  Held here rather than derived so a jib chart
+     * can be looked up at the angle the operator last settled on.
+     */
+    val boomAngleDeg: Double? = null,
 ) {
+    /** Whether a jib configuration is selected, rather than the main boom alone. */
+    val jibActive: Boolean
+        get() = jibConfig == "boom_jib" || jibConfig == "boom_ext_jib"
+
     /** The manual entry's `(radius, capacity)` points, in row order. */
     fun chartPairs(): List<Pair<Double, Double>> = rows.mapNotNull { it.pair() }
 

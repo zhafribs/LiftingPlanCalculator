@@ -1,5 +1,7 @@
 package com.zhafrisbs.liftingplancalculator
 
+import com.zhafrisbs.liftingplancalculator.core.CraneInputs
+import com.zhafrisbs.liftingplancalculator.core.ExcelImport
 import com.zhafrisbs.liftingplancalculator.core.ExcelLoader
 import com.zhafrisbs.liftingplancalculator.core.XlsxSheet
 import org.junit.Assert.assertEquals
@@ -181,5 +183,103 @@ class JibSheetImportTest {
         assertEquals(6, chart.jibColumns.size)
         assertEquals(7.2, chart.jibColumns[0].length, 1e-9)
         assertEquals(5.0, chart.jibColumns[0].offset, 1e-9)
+    }
+
+    // -----------------------------------------------------------------------
+    // The jib carried onto the operator's inputs
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun importingKeepsTheLongestMainBoomAndOffersTheJibTables() {
+        val chart = ExcelLoader.loadChart(listOf(XlsxSheet("Chart", newFormatRows)))
+
+        val inputs = ExcelImport.importedInputs(CraneInputs(), chart, "TR350M-1.xlsx", 2000.0)
+
+        // The chart's crane position and its six (length, offset) jib tables are
+        // published on the inputs; the import opens on the main boom alone.
+        assertEquals(-1.7 to 2.8, inputs.chartPosition)
+        assertEquals(6, inputs.chartJibs.size)
+        assertEquals("boom", inputs.jibConfig)
+        assertTrue(inputs.chartJibPoints.isEmpty())
+        assertNull(inputs.boomAngleDeg)
+    }
+
+    @Test
+    fun choosingAJibColumnLoadsItsPoints() {
+        val chart = ExcelLoader.loadChart(listOf(XlsxSheet("Chart", newFormatRows)))
+        // An angle published before the jib was chosen: the selection below has no
+        // lift to meet, so it must clear to null rather than keep this figure.
+        val inputs = ExcelImport
+            .importedInputs(CraneInputs(), chart, "TR350M-1.xlsx", 2000.0)
+            .copy(boomAngleDeg = 70.0)
+
+        val selected = ExcelImport.jibChanged(inputs, chart, "boom_jib", 7.2, 25.0, 0.0)
+
+        assertEquals("boom_jib", selected.jibConfig)
+        assertEquals(7.2, selected.jibLength!!, 1e-9)
+        assertEquals(25.0, selected.jibOffset!!, 1e-9)
+        assertEquals(listOf(45.0 to 550.0, 83.0 to 1800.0), selected.chartJibPoints)
+        // No lift to meet: nothing is suggested.
+        assertNull(selected.boomAngleDeg)
+
+        val back = ExcelImport.jibChanged(selected, chart, "boom", null, null, 0.0)
+        assertEquals("boom", back.jibConfig)
+        assertTrue(back.chartJibPoints.isEmpty())
+        assertNull(back.jibLength)
+        assertNull(back.jibOffset)
+    }
+
+    @Test
+    fun theSuggestedJibAngleIsTheFarthestThatStillCarriesTheLift() {
+        val points = listOf(
+            45.0 to 400.0,
+            50.0 to 600.0,
+            55.0 to 800.0,
+            60.0 to 1000.0,
+            65.0 to 1500.0,
+        )
+        // Gross 1000 kg needs 1333.33 kg; the farthest reach that carries it is
+        // the smallest charted angle that meets the requirement.
+        assertEquals(65.0, ExcelImport.suggestJibAngle(points, 1000.0)!!, 1e-9)
+        // Gross 400 kg needs 533.33 kg: 50 deg.
+        assertEquals(50.0, ExcelImport.suggestJibAngle(points, 400.0)!!, 1e-9)
+        // Nothing carries the largest lift; no lift, no suggestion.
+        assertNull(ExcelImport.suggestJibAngle(points, 100000.0))
+        assertNull(ExcelImport.suggestJibAngle(points, 0.0))
+    }
+
+    @Test
+    fun choosingAJibConfigurationSuggestsAnAngleThatPassesThe75Rule() {
+        val chart = ExcelLoader.loadChart(listOf(XlsxSheet("Chart", newFormatRows)))
+        // Gross 500 kg needs 666.67 kg of chart. The 7.2 m @ 25 deg jib carries
+        // 1800 kg at 83 deg and 550 kg at 45 deg, so 83 deg is the only charted
+        // angle that passes.
+        val selected = ExcelImport.jibChanged(CraneInputs(), chart, "boom_jib", 7.2, 25.0, 500.0)
+
+        assertEquals(83.0, selected.boomAngleDeg!!, 1e-9)
+    }
+
+    @Test
+    fun forgettingTheChartClearsTheJib() {
+        val chart = ExcelLoader.loadChart(listOf(XlsxSheet("Chart", newFormatRows)))
+        val selected = ExcelImport.jibChanged(
+            ExcelImport.importedInputs(CraneInputs(), chart, "TR350M-1.xlsx", 2000.0),
+            chart, "boom_jib", 7.2, 25.0, 500.0,
+        )
+        // Guard the set-up, so the assertions below test a real clear rather than
+        // defaults that would read as a clear whatever happened.
+        assertEquals("boom_jib", selected.jibConfig)
+        assertEquals(7.2, selected.jibLength!!, 1e-9)
+        assertEquals(83.0, selected.boomAngleDeg!!, 1e-9)
+
+        val forgotten = ExcelImport.forgetChart(selected)
+
+        assertTrue(forgotten.chartJibs.isEmpty())
+        assertTrue(forgotten.chartJibPoints.isEmpty())
+        assertEquals("boom", forgotten.jibConfig)
+        assertNull(forgotten.jibLength)
+        assertNull(forgotten.jibOffset)
+        assertNull(forgotten.boomAngleDeg)
+        assertNull(forgotten.chartPosition)
     }
 }
